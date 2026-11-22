@@ -19,6 +19,7 @@ import {
 import './style.css';
 
 import { createPlatformApi } from './platform/index.js';
+import { appendTimestamp, normalizeFocusSettings } from './lib/playback-utils.mjs';
 
 const api = createPlatformApi();
 
@@ -174,7 +175,7 @@ function App() {
           try { saved = JSON.parse(localStorage.getItem('lt_focus_settings') || '{}'); } catch { saved = {}; }
         }
         if (alive) {
-          setFocusSettings(current => ({ ...current, ...saved }));
+          setFocusSettings(normalizeFocusSettings({ ...focusSettings, ...saved }));
           setSettingsReady(true);
         }
       } catch (error) {
@@ -445,14 +446,8 @@ function App() {
     if (!selected) return;
 
     const totalSeconds = Math.max(0, Math.floor(playbackTime));
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    const timestamp = `[${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}]`;
-
-    setNotes(current => {
-      const separator = current && !current.endsWith('\n') ? '\n' : '';
-      return `${current}${separator}${timestamp} `;
-    });
+    const timestamp = appendTimestamp('', totalSeconds).trim();
+    setNotes(current => appendTimestamp(current, totalSeconds));
     setMessage(`Timestamp ${timestamp} inserted.`);
   }
 
