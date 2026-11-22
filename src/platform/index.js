@@ -1,5 +1,6 @@
 
 import { registerPlugin, Capacitor } from '@capacitor/core';
+import { normalizeProgressSample } from '../lib/playback-utils.mjs';
 import { FilePicker } from '@capawesome/capacitor-file-picker';
 import {
   CapacitorSQLite,
@@ -421,11 +422,20 @@ async function androidRecordProgress({
   const db = await getAndroidDb();
 
   const id = Number(videoId);
-  const position = Math.max(0, asNumber(positionSeconds));
-  const duration = Math.max(0, asNumber(durationSeconds));
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error('Invalid video ID for playback progress.');
+  }
 
-  const completed =
-    duration > 0 && position / duration >= 0.9 ? 1 : 0;
+  // Ignore transient samples while the YouTube iframe/ExoPlayer is starting
+  // or closing. A zero duration must never erase a previously saved position.
+  const sample = normalizeProgressSample(positionSeconds, durationSeconds);
+  if (!sample) {
+    return { success: false, ignored: true };
+  }
+
+  const position = sample.positionSeconds;
+  const duration = sample.durationSeconds;
+  const completed = sample.completed ? 1 : 0;
 
   await db.run(
     `
