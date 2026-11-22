@@ -291,7 +291,17 @@ function initializeYouTubePlayer() {
 
   // pagehide fires for window close as well as normal navigation. The latest
   // valid sample is retained so iframe teardown cannot replace it with zero.
-  const persistOnClose = () => captureYouTubeProgress(true);
+  const persistOnClose = () => {
+    // Use the last stable sample; querying an iframe during teardown can
+    // return a transient zero and overwrite the real resume position.
+    if (lastKnownYouTubeProgress) {
+      saveProgress(
+        lastKnownYouTubeProgress.position,
+        lastKnownYouTubeProgress.duration,
+        true
+      );
+    }
+  };
   window.addEventListener('pagehide', persistOnClose);
   window.addEventListener('beforeunload', persistOnClose);
 }
