@@ -61,6 +61,7 @@ public class YouTubePlayerActivity extends Activity {
                 savedInstanceState.getDouble("duration", 0);
             completed =
                 savedInstanceState.getBoolean("completed", false);
+            startPositionSeconds = Math.max(0, lastPositionSeconds);
         }
 
         buildScreen();
@@ -273,7 +274,7 @@ public class YouTubePlayerActivity extends Activity {
             + "if(" + Math.floor(startSeconds) + ">0){player.seekTo(" + Math.floor(startSeconds) + ",true);}"
             + "report('ready');"
             + "if(progressTimer===null){"
-            + "progressTimer=setInterval(reportProgress,3000);"
+            + "progressTimer=setInterval(reportProgress,1000);"
             + "}"
             + "},"
             + "onStateChange:function(e){"
