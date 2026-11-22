@@ -467,7 +467,7 @@ function App() {
   const visibleHistory = filterVideosForFocus(history, focusSettings);
   const visibleRecommendations = filterVideosForFocus(recommendations, focusSettings);
   const showRecommendations = shouldShowRecommendations(focusSettings);
-  const featuredVideo = visibleRecommendations[0] || visibleHistory[0] || visibleVideos[0] || null;
+  const featuredVideo = (showRecommendations ? visibleRecommendations[0] : null) || visibleHistory[0] || visibleVideos[0] || null;
 
   const localCount = useMemo(
     () => videos.filter(video => video.isLocal).length,
