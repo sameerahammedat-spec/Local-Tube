@@ -1059,14 +1059,14 @@ function App() {
                 ['enabled', 'Enable Focus defaults', 'Prioritise your local library.'],
                 ['hideYouTube', 'Hide YouTube discovery', 'Keep channel catalogue access intentional.'],
                 ['hideRecommendations', 'Hide recommendations', 'Reduce suggested-content shelves.'],
-                ['hideShorts', 'Block Shorts navigation', 'Never open Shorts as a top-level destination.']
+                ['hideShorts', 'Block Shorts and external navigation', 'Always enforced: the single-video player cannot open YouTube feeds or navigate away.']
               ].map(([key, label, description]) => (
                 <label className="setting-row" key={key}>
                   <span><strong>{label}</strong><small>{description}</small></span>
                   <input
                     type="checkbox"
-                    checked={Boolean(focusSettings[key])}
-                    disabled={!settingsReady}
+                    checked={key === 'hideShorts' ? true : Boolean(focusSettings[key])}
+                    disabled={!settingsReady || key === 'hideShorts'}
                     onChange={event => updateFocusSetting(key, event.target.checked)}
                   />
                 </label>
