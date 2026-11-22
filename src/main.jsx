@@ -423,6 +423,7 @@ function App() {
         id: selected.id,
         tags
       });
+      setSelected(current => current ? { ...current, tags } : current);
 
       setMessage('Tags saved successfully.');
       await refresh();
@@ -435,11 +436,10 @@ function App() {
     if (!selected) return;
 
     try {
-      const result = await api.saveNotes({
-        videoId: selected.id,
-        title: selected.title,
-        content: notes
-      });
+      const exportPayload = { videoId: selected.id, title: selected.title, content: notes };
+      const result = typeof api.exportNotes === 'function'
+        ? await api.exportNotes(exportPayload)
+        : await api.saveNotes(exportPayload);
 
       if (!result.canceled) {
         setNotesPath(result.filePath);
