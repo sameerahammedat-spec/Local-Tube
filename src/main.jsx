@@ -14,7 +14,14 @@ import {
   Youtube,
   X,
   Download,
-  Check
+  Check,
+  Clapperboard,
+  HardDrive,
+  Sparkles,
+  ChevronRight,
+  Shield,
+  LibraryBig,
+  PanelRight
 } from 'lucide-react';
 import './style.css';
 
@@ -484,16 +491,14 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-icon">
-            <Play size={19} fill="currentColor" />
-          </div>
-          <div>
-            <strong>LocalTube</strong>
-            <small>YOUR PERSONAL LIBRARY</small>
+          <div className="brand-icon"><Clapperboard size={22} strokeWidth={2.2} /></div>
+          <div className="brand-wordmark">
+            <strong>LOCAL<span>TUBE</span></strong>
+            <small>YOUR PRIVATE STREAMING SPACE</small>
           </div>
         </div>
 
-        <div className="nav-label">WORKSPACE</div>
+        <div className="nav-label">DISCOVER</div>
         <button
           className={`nav-item ${page === 'home' ? 'active' : ''}`}
           onClick={() => {
@@ -503,7 +508,7 @@ function App() {
             setBookmarksOnly(false);
           }}
         >
-          <Home size={18} />
+          <Sparkles size={18} />
           Home
         </button>
 
@@ -516,8 +521,8 @@ function App() {
             setBookmarksOnly(false);
           }}
         >
-          <Home size={18} />
-          Local videos
+          <LibraryBig size={18} />
+          My Library
         </button>
 
         {!(focusSettings.enabled && focusSettings.hideYouTube) && (
@@ -530,7 +535,7 @@ function App() {
           }}
         >
           <Youtube size={18} />
-          YouTube channels
+          Channel Vault
           <span>{channels.length}</span>
         </button>
         )}
@@ -544,7 +549,7 @@ function App() {
           }}
         >
           <Bookmark size={18} />
-          Bookmarks
+          My List
         </button>
 
         <button
@@ -557,16 +562,14 @@ function App() {
           }}
         >
           <ShieldCheck size={18} />
-          Focus
+          Focus Space
         </button>
         <div className="sidebar-bottom">
           <div className="privacy-card">
-            <ShieldCheck size={20} />
-            <strong>Local-first by design</strong>
-            <p>
-              Your local video library and notes stay on this laptop.
-              YouTube catalogue entries are stored separately.
-            </p>
+            <div className="privacy-card-icon"><Shield size={17} /></div>
+            <strong>Your space. Your rules.</strong>
+            <p>Private by design. Your videos and notes stay under your control.</p>
+            <span className="privacy-status"><i /> LOCAL STORAGE ACTIVE</span>
           </div>
 
           <button
@@ -582,7 +585,7 @@ function App() {
       <main className="main-area">
         <header className="topbar">
           <div>
-            <div className="eyebrow">PERSONAL VIDEO WORKSPACE</div>
+            <div className="eyebrow">YOUR PRIVATE ENTERTAINMENT SPACE</div>
             <h1>
               {page === 'home'
                 ? 'Your personal video space'
@@ -613,13 +616,12 @@ function App() {
               )}
             </div>
 
-            <button
-              className="primary-btn"
-              onClick={importLocalFiles}
-            >
-              <Plus size={17} />
-              Import local files
-            </button>
+            <div className="topbar-right">
+              <div className="privacy-pill"><ShieldCheck size={14} /> PRIVATE LIBRARY</div>
+              <button className="primary-btn" onClick={importLocalFiles}>
+                <Plus size={17} /> Import videos
+              </button>
+            </div>
           </div>
         </header>
 
@@ -640,26 +642,38 @@ function App() {
                 backgroundImage: `linear-gradient(90deg,rgba(5,8,16,.98) 0%,rgba(5,8,16,.78) 46%,rgba(5,8,16,.2) 100%),linear-gradient(0deg,#080b12 0%,transparent 58%),url("${featuredVideo.thumbnail_url}")`
               } : undefined}
             >
+              <div className="hero-topline">
+                <span className="hero-kicker"><Sparkles size={13} /> CURATED FOR YOUR SPACE</span>
+                <span className="hero-private"><ShieldCheck size={13} /> PRIVATE LIBRARY</span>
+              </div>
               <div className="mobile-hero-copy">
-                <span className="eyebrow">{featuredVideo ? 'FEATURED IN YOUR LIBRARY' : 'YOUR PERSONAL VIDEO SPACE'}</span>
-                <h2>{featuredVideo ? featuredVideo.title : <>Less scrolling.<br />More meaningful watching.</>}</h2>
-                <p>{featuredVideo ? (featuredVideo.channel_title || 'Continue from your personal collection') : 'Your own library, available whenever you need it.'}</p>
+                <span className="eyebrow">{featuredVideo ? 'PICK UP WHERE YOU LEFT OFF' : 'WELCOME TO YOUR PRIVATE CINEMA'}</span>
+                <h2>{featuredVideo ? featuredVideo.title : <>Your videos.<br />Your world.</>}</h2>
+                <p>{featuredVideo ? (featuredVideo.channel_title || 'Continue from your personal collection') : 'A beautiful home for the videos you choose to keep. No endless feeds. Just what matters to you.'}</p>
                 <div className="hero-actions">
                   {featuredVideo && (
-                    <button className="primary-btn" onClick={() => openVideo(featuredVideo)}>
-                      <Play size={17} fill="currentColor" /> Play featured
+                    <button className="primary-btn hero-play" onClick={() => openVideo(featuredVideo)}>
+                      <Play size={17} fill="currentColor" /> {visibleHistory.some(item => item.id === featuredVideo.id) ? 'Continue watching' : 'Play featured'}
                     </button>
                   )}
-                  <button className="outline-btn" onClick={importLocalFiles}>
-                    <Plus size={17} /> Add videos
+                  <button className="outline-btn hero-add" onClick={importLocalFiles}>
+                    <Plus size={17} /> Add to library
                   </button>
                 </div>
+                <div className="hero-metrics">
+                  <div><strong>{localCount}</strong><span>VIDEOS IN LIBRARY</span></div>
+                  <i />
+                  <div><strong>{visibleHistory.length}</strong><span>IN PROGRESS</span></div>
+                  <i />
+                  <div><strong>{channels.length}</strong><span>CHANNELS</span></div>
+                </div>
               </div>
+              <div className="hero-side-mark"><Clapperboard size={88} strokeWidth={1} /><span>YOUR PRIVATE CINEMA</span></div>
             </div>
 
             <div className="section-head">
               <div>
-                <h2>Continue watching</h2>
+                <h2><span className="shelf-accent">01</span> Continue watching</h2>
                 <p>Pick up where you left off.</p>
               </div>
             </div>
@@ -675,8 +689,8 @@ function App() {
               <>
                 <div className="section-head mobile-shelf-heading">
                   <div>
-                    <h2>Recommended from your library</h2>
-                    <p>Suggestions from content you've already imported.</p>
+                    <h2><span className="shelf-accent">02</span> Handpicked for you</h2>
+                    <p>Discover something worth your time from your own collection.</p>
                   </div>
                 </div>
 
@@ -695,8 +709,8 @@ function App() {
 
             <div className="section-head mobile-shelf-heading">
               <div>
-                <h2>Recently added</h2>
-                <p>Your latest local videos.</p>
+                <h2><span className="shelf-accent">03</span> Recently added</h2>
+                <p>Fresh additions to your personal library.</p>
               </div>
             </div>
 
@@ -898,7 +912,7 @@ function App() {
             <>
               <div className="player-heading">
                 <div>
-                  <span className="eyebrow">NOW SELECTED</span>
+                  <span className="eyebrow"><PanelRight size={12} /> NOW IN YOUR STUDIO</span>
                   <h2>{selected.title}</h2>
                   <p>{selected.channel_title}</p>
                 </div>
@@ -927,25 +941,23 @@ function App() {
                 </button>
               </div>
 
-              <div className="player-frame">
-                <div className="catalogue-placeholder">
-                  <Play size={36} />
-
+              <div className="player-frame premium-preview">
+                {selected.thumbnail_url && <img className="preview-image" src={selected.thumbnail_url} alt="" />}
+                <div className="preview-shade" />
+                <div className="preview-topline"><span>{selected.isLocal ? 'LOCAL COLLECTION' : 'CHANNEL VAULT'}</span><span><ShieldCheck size={12} /> PRIVATE SESSION</span></div>
+                <div className="preview-center">
+                  <button className="preview-play" onClick={() => openVideo(selected)} aria-label="Open selected video"><Play size={25} fill="currentColor" /></button>
                   <strong>{selected.title}</strong>
-
-                  <p>
-                    {selected.isLocal
-                      ? 'Local video'
-                      : 'YouTube channel video'}
-                    {' '}· Opens in the dedicated LocalTube player.
-                  </p>
+                  <p>{selected.isLocal ? 'Ready in your local library' : 'Ready to watch from your imported channel'}</p>
+                  <button className="preview-open" onClick={() => openVideo(selected)}>Open player <ChevronRight size={15} /></button>
                 </div>
+                <div className="preview-bottomline"><span><HardDrive size={12} /> {selected.isLocal ? 'ON THIS DEVICE' : 'YOUTUBE EMBED'}</span><span>LOCALTUBE PLAYER</span></div>
               </div>
 
               <div className="detail-tabs">
                 <span className="tab-active">
                   <NotebookPen size={15} />
-                  Notes
+                  WATCH NOTES
                 </span>
 
                 <span className="local-indicator">
@@ -954,7 +966,7 @@ function App() {
               </div>
 
               <div className="notes-toolbar">
-                <span>VIDEO NOTES</span>
+                <span>YOUR PRIVATE NOTES</span>
 
                 <button
                   className="subtle-btn small"
