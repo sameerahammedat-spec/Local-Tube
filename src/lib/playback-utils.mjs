@@ -1,0 +1,46 @@
+export function formatTimestamp(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const remainder = total % 60;
+  const pad = value => String(value).padStart(2, '0');
+  return hours > 0
+    ? `[${pad(hours)}:${pad(minutes)}:${pad(remainder)}]`
+    : `[${pad(minutes)}:${pad(remainder)}]`;
+}
+
+export function isPlaybackCompleted(positionSeconds, durationSeconds, threshold = 0.9) {
+  const position = Number(positionSeconds);
+  const duration = Number(durationSeconds);
+  const ratio = Number(threshold);
+  if (!Number.isFinite(position) || !Number.isFinite(duration) ||
+      !Number.isFinite(ratio) || duration <= 0 || ratio <= 0 || ratio > 1) {
+    return false;
+  }
+  return position / duration >= ratio;
+}
+
+export function isValidYouTubeId(value) {
+  return typeof value === 'string' && /^[a-zA-Z0-9_-]{11}$/.test(value);
+}
+
+export function normalizeFocusSettings(value = {}) {
+  const defaults = {
+    enabled: true,
+    hideYouTube: true,
+    hideRecommendations: true,
+    hideShorts: true
+  };
+  const result = { ...defaults };
+  for (const key of Object.keys(defaults)) {
+    if (typeof value?.[key] === 'boolean') result[key] = value[key];
+  }
+  return result;
+}
+
+export function appendTimestamp(notes, seconds) {
+  const timestamp = formatTimestamp(seconds);
+  const current = String(notes || '');
+  const separator = current && !current.endsWith('\n') ? '\n' : '';
+  return `${current}${separator}${timestamp} `;
+}
