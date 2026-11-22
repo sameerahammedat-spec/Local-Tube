@@ -19,7 +19,7 @@ import {
 import './style.css';
 
 import { createPlatformApi } from './platform/index.js';
-import { appendTimestamp, normalizeFocusSettings } from './lib/playback-utils.mjs';
+import { appendTimestamp, normalizeFocusSettings, filterVideosForFocus, shouldShowRecommendations } from './lib/playback-utils.mjs';
 
 const api = createPlatformApi();
 
@@ -455,7 +455,11 @@ function App() {
     channel => channel.channelId === activeChannel
   );
 
-  const featuredVideo = recommendations[0] || history[0] || videos[0] || null;
+  const visibleVideos = filterVideosForFocus(videos, focusSettings);
+  const visibleHistory = filterVideosForFocus(history, focusSettings);
+  const visibleRecommendations = filterVideosForFocus(recommendations, focusSettings);
+  const showRecommendations = shouldShowRecommendations(focusSettings);
+  const featuredVideo = visibleRecommendations[0] || visibleHistory[0] || visibleVideos[0] || null;
 
   const localCount = useMemo(
     () => videos.filter(video => video.isLocal).length,
@@ -502,6 +506,7 @@ function App() {
           Local videos
         </button>
 
+        {!(focusSettings.enabled && focusSettings.hideYouTube) && (
         <button
           className={`nav-item ${page === 'channels' ? 'active' : ''}`}
           onClick={() => {
@@ -514,6 +519,7 @@ function App() {
           YouTube channels
           <span>{channels.length}</span>
         </button>
+        )}
 
         <button
           className={`nav-item ${page === 'bookmarks' ? 'active' : ''}`}
@@ -644,8 +650,8 @@ function App() {
               </div>
             </div>
 
-            {history.length > 0 ? (
-              <VideoGrid videos={history} selected={selected}
+            {visibleHistory.length > 0 ? (
+              <VideoGrid videos={visibleHistory} selected={selected}
                 onSelect={setSelected} onPlay={openVideo} />
             ) : (
               <p className="mobile-hint">Your recently watched videos will appear here.</p>
@@ -658,9 +664,9 @@ function App() {
               </div>
             </div>
 
-            {(recommendations.length ? recommendations : videos).length > 0 ? (
+            {showRecommendations && ((visibleRecommendations.length ? visibleRecommendations : visibleVideos).length > 0) ? (
               <VideoGrid
-                videos={(recommendations.length ? recommendations : videos).slice(0, 8)}
+                videos={(visibleRecommendations.length ? visibleRecommendations : visibleVideos).slice(0, 8)}
                 selected={selected}
                 onSelect={setSelected}
                 onPlay={openVideo}
@@ -677,7 +683,7 @@ function App() {
             </div>
 
             {videos.length > 0 ? (
-              <VideoGrid videos={videos.slice(0, 8)} selected={selected}
+              <VideoGrid videos={visibleVideos.slice(0, 8)} selected={selected}
                 onSelect={setSelected} onPlay={openVideo} />
             ) : (
               <p className="mobile-hint">No videos have been imported yet.</p>
@@ -701,7 +707,7 @@ function App() {
             </div>
 
             {videos.length > 0 ? (
-              <VideoGrid videos={videos} selected={selected}
+              <VideoGrid videos={visibleVideos} selected={selected}
                 onSelect={setSelected} onPlay={openVideo} />
             ) : (
               <p className="mobile-hint">Import local videos to build your focus library.</p>
@@ -718,7 +724,7 @@ function App() {
             )}
           </section>
         )}
-        {page === 'channels' && (
+        {page === 'channels' && !(focusSettings.enabled && focusSettings.hideYouTube) && (
           <section className="channel-page">
             <form
               className="channel-form panel"
@@ -803,7 +809,7 @@ function App() {
                 </div>
 
                 <VideoGrid
-                  videos={videos}
+                  videos={visibleVideos}
                   selected={selected}
                   onSelect={setSelected}
                   onPlay={openVideo}
@@ -842,7 +848,7 @@ function App() {
               </div>
             ) : (
               <VideoGrid
-                videos={videos}
+                videos={visibleVideos}
                 selected={selected}
                 onSelect={setSelected}
                 onPlay={openVideo}
