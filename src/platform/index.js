@@ -114,18 +114,22 @@ async function getAndroidDb() {
       }
 
       // Create indexes only AFTER tables and migration exist.
+      // Older databases may already contain duplicate catalogue entries.
+      // Rebuild lookup indexes as non-unique so an upgrade never fails or
+      // requires deleting user rows. Import code performs duplicate checks.
       await db.execute(`
-        CREATE UNIQUE INDEX IF NOT EXISTS videos_unique_source_uri
-        ON videos(source_uri)
-        WHERE source_uri IS NOT NULL AND source_uri <> '';
+        DROP INDEX IF EXISTS videos_unique_source_uri;
+        DROP INDEX IF EXISTS videos_unique_local_path;
+        DROP INDEX IF EXISTS videos_unique_youtube_id;
 
-        CREATE UNIQUE INDEX IF NOT EXISTS videos_unique_local_path
-        ON videos(file_path)
-        WHERE file_path IS NOT NULL AND file_path <> '';
+        CREATE INDEX IF NOT EXISTS videos_source_uri_lookup
+        ON videos(source_uri);
 
-        CREATE UNIQUE INDEX IF NOT EXISTS videos_unique_youtube_id
-        ON videos(youtube_id)
-        WHERE youtube_id IS NOT NULL AND youtube_id <> '';
+        CREATE INDEX IF NOT EXISTS videos_local_path_lookup
+        ON videos(file_path);
+
+        CREATE INDEX IF NOT EXISTS videos_youtube_id_lookup
+        ON videos(youtube_id);
 
         CREATE INDEX IF NOT EXISTS watch_history_recent
         ON watch_history(last_watched_at DESC);
