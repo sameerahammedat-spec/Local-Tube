@@ -188,9 +188,11 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (focusSettings.enabled && focusSettings.hideYouTube && page === 'channels') {
-      setPage('local');
-      setActiveChannel('');
+    if (focusSettings.enabled && focusSettings.hideYouTube) {
+      if (page === 'channels') {
+        setPage('local');
+        setActiveChannel('');
+      }
       setSelected(current => current && !current.isLocal ? null : current);
     }
   }, [focusSettings.enabled, focusSettings.hideYouTube, page]);
@@ -714,7 +716,7 @@ function App() {
             <div className="section-head">
               <div>
                 <h2>Your focus library</h2>
-                <p>{videos.length} videos in your local catalogue.</p>
+                <p>{visibleVideos.length} videos in your local catalogue.</p>
               </div>
             </div>
 
