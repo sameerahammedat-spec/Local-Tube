@@ -241,7 +241,6 @@ function initializeYouTubePlayer() {
             if (startSeconds > 0) {
               event.target.seekTo(startSeconds, true);
             }
-            captureYouTubeProgress(true);
           },
           onStateChange: event => {
             if (event.data === YT.PlayerState.PLAYING) {
