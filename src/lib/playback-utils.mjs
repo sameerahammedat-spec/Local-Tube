@@ -44,3 +44,22 @@ export function appendTimestamp(notes, seconds) {
   const separator = current && !current.endsWith('\n') ? '\n' : '';
   return `${current}${separator}${timestamp} `;
 }
+
+
+export function filterVideosForFocus(videos, settings = {}) {
+  const rows = Array.isArray(videos) ? videos : [];
+  if (!settings.enabled || !settings.hideYouTube) return rows;
+  return rows.filter(video => Boolean(video?.isLocal || video?.file_path));
+}
+
+export function shouldShowRecommendations(settings = {}) {
+  return !(Boolean(settings.enabled) && Boolean(settings.hideRecommendations));
+}
+
+export function normalizeProgressSample(positionSeconds, durationSeconds) {
+  const position = Number(positionSeconds);
+  const duration = Number(durationSeconds);
+  if (!Number.isFinite(position) || !Number.isFinite(duration) || position < 0 || duration <= 0) return null;
+  const safePosition = Math.min(position, duration);
+  return { positionSeconds: safePosition, durationSeconds: duration, completed: safePosition / duration >= 0.9 };
+}
