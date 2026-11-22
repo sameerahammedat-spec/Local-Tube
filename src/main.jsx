@@ -1119,7 +1119,8 @@ function VideoGrid({ videos, selected, onSelect, onPlay }) {
           type="button"
           className={`video-card ${
             selected?.id === video.id ? 'selected' : ''
-          }`}
+          } ${video.isLocal && video.fileExists === false ? 'unavailable' : ''}`}
+          disabled={Boolean(video.isLocal && video.fileExists === false)}
           onClick={() => {
             onSelect(video);
             onPlay(video);
@@ -1144,7 +1145,7 @@ function VideoGrid({ videos, selected, onSelect, onPlay }) {
                 video.isLocal ? 'local' : 'online'
               }`}
             >
-              {video.isLocal ? 'LOCAL FILE' : 'YOUTUBE'}
+              {video.isLocal && video.fileExists === false ? 'FILE MISSING' : video.isLocal ? 'LOCAL FILE' : 'YOUTUBE'}
             </span>
 
             <span className="card-play-icon">
