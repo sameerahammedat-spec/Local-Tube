@@ -1027,17 +1027,17 @@ function App() {
               </div>
             </>
           ) : (
-            <div className="detail-empty">
-              <div className="empty-icon">
-                <Play size={27} />
+            <div className="detail-empty studio-welcome">
+              <div className="studio-orbit"><Clapperboard size={31} /></div>
+              <span className="eyebrow">YOUR PERSONAL STUDIO</span>
+              <h3>Make this moment yours.</h3>
+              <p>Choose any title to open its private watch space. Play, save notes, add timestamps and keep everything organized.</p>
+              <div className="studio-steps">
+                <span><Play size={13} /> WATCH</span>
+                <span><NotebookPen size={13} /> CAPTURE NOTES</span>
+                <span><Bookmark size={13} /> SAVE FOR LATER</span>
               </div>
-
-              <h3>Select a video</h3>
-
-              <p>
-                Select a local video or a YouTube catalogue entry to play it
-                and write notes.
-              </p>
+              <button className="outline-btn studio-import" onClick={importLocalFiles}><Plus size={15} /> Add your first videos</button>
             </div>
           )}
         </aside>
