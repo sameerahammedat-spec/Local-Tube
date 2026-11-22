@@ -41,6 +41,7 @@ function App() {
 
   const [notes, setNotes] = useState('');
   const [notesPath, setNotesPath] = useState('');
+  const [notesReadyForVideo, setNotesReadyForVideo] = useState(null);
   const [tags, setTags] = useState('');
   const [message, setMessage] = useState('');
   const [showSettings, setShowSettings] = useState(false);
@@ -187,8 +188,11 @@ function App() {
   }, []);
 
   // Load notes and tags whenever the selected video changes.
+  // Mark notes as ready only after the correct video's content has loaded;
+  // this prevents the previous video's text being autosaved to a new video.
   useEffect(() => {
     let alive = true;
+    setNotesReadyForVideo(null);
 
     async function loadSelectedDetails() {
       if (!selected) {
@@ -204,14 +208,18 @@ function App() {
 
         setNotesPath(path || '');
 
-        const content = path
-          ? await api.readNotes(path)
-          : '';
+        let content = '';
+        if (typeof api.loadNotesDraft === 'function') {
+          content = await api.loadNotesDraft(selected.id);
+        } else if (path) {
+          content = await api.readNotes(path);
+        }
 
         if (!alive) return;
 
         setNotes(content || '');
         setTags(selected.tags || '');
+        setNotesReadyForVideo(selected.id);
       } catch (error) {
         if (alive) {
           console.error('[LocalTube] Notes loading failed:', error);
@@ -226,6 +234,31 @@ function App() {
       alive = false;
     };
   }, [selected?.id]);
+
+  // Automatically persist edits after a short pause. Desktop writes its
+  // recovery draft and any existing TXT file; Android writes to SQLite.
+  useEffect(() => {
+    if (!selected || notesReadyForVideo !== selected.id) return undefined;
+
+    const videoId = selected.id;
+    const title = selected.title;
+    const content = notes;
+
+    const timer = setTimeout(async () => {
+      try {
+        if (typeof api.autoSaveNotes === 'function') {
+          await api.autoSaveNotes({ videoId, title, content });
+        } else {
+          await api.saveNotes({ videoId, title, content });
+        }
+      } catch (error) {
+        console.error('[LocalTube] Notes autosave failed:', error);
+        setMessage(`Notes autosave failed: ${error.message || error}`);
+      }
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, [selected?.id, selected?.title, notes, notesReadyForVideo]);
 
   async function importLocalFiles() {
     try {
