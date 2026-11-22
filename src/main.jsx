@@ -299,11 +299,7 @@ function App() {
 
     const timer = setTimeout(async () => {
       try {
-        if (typeof api.autoSaveNotes === 'function') {
-          await api.autoSaveNotes({ videoId, title, content });
-        } else {
-          await api.saveNotes({ videoId, title, content });
-        }
+        await persistNotesDraft(videoId, title, content);
       } catch (error) {
         console.error('[LocalTube] Notes autosave failed:', error);
         setMessage(`Notes autosave failed: ${error.message || error}`);
@@ -432,6 +428,14 @@ function App() {
     } catch (error) {
       setMessage(`Could not save tags: ${error.message}`);
     }
+  }
+
+  async function persistNotesDraft(videoId, title, content) {
+    const payload = { videoId, title, content };
+    if (typeof api.autoSaveNotes === 'function') {
+      return api.autoSaveNotes(payload);
+    }
+    return api.saveNotes(payload);
   }
 
   async function saveNotes() {
@@ -964,6 +968,14 @@ function App() {
                 className="notes-editor"
                 value={notes}
                 onChange={event => setNotes(event.target.value)}
+                onBlur={() => {
+                  if (selected && notesReadyForVideo === selected.id) {
+                    persistNotesDraft(selected.id, selected.title, notes).catch(error => {
+                      console.error('[LocalTube] Notes blur-save failed:', error);
+                      setMessage(`Notes save failed: ${error.message || error}`);
+                    });
+                  }
+                }}
                 placeholder="Write notes and timestamps..."
               />
 
