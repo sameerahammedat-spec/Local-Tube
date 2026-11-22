@@ -366,6 +366,8 @@ ipcMain.handle('library:importFiles', async () => {
   if (result.canceled || !result.filePaths?.length) {
     return {
       addedCount: 0,
+      skippedCount: 0,
+      errors: [],
       videos: listVideos({ type: 'local' })
     };
   }
@@ -382,13 +384,16 @@ ipcMain.handle('library:importFiles', async () => {
   `);
 
   const transaction = database.transaction((selectedPaths) => {
-    let added = 0;
+    let addedCount = 0;
+    let skippedCount = 0;
 
     for (const selectedPath of selectedPaths) {
       const filePath = path.resolve(selectedPath);
 
-      if (!fs.existsSync(filePath)) continue;
-      if (findExisting.get(filePath)) continue;
+      if (!fs.existsSync(filePath) || findExisting.get(filePath)) {
+        skippedCount++;
+        continue;
+      }
 
       const title = path.basename(
         filePath,
@@ -396,16 +401,17 @@ ipcMain.handle('library:importFiles', async () => {
       ).replace(/[._-]+/g, ' ');
 
       insert.run(title, filePath);
-      added++;
+      addedCount++;
     }
 
-    return added;
+    return { addedCount, skippedCount };
   });
 
-  const addedCount = transaction(result.filePaths);
+  const summary = transaction(result.filePaths);
 
   return {
-    addedCount,
+    ...summary,
+    errors: [],
     videos: listVideos({ type: 'local' })
   };
 });
