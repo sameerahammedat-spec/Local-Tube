@@ -5,7 +5,10 @@ import {
   isPlaybackCompleted,
   isValidYouTubeId,
   normalizeFocusSettings,
-  appendTimestamp
+  appendTimestamp,
+  filterVideosForFocus,
+  shouldShowRecommendations,
+  normalizeProgressSample
 } from '../src/lib/playback-utils.mjs';
 
 test('formats timestamps below one hour as mm:ss', () => {
@@ -51,4 +54,23 @@ test('merges only boolean focus preferences with safe defaults', () => {
 test('appends a timestamp without losing existing notes', () => {
   assert.equal(appendTimestamp('Lesson notes', 75), 'Lesson notes\n[01:15] ');
   assert.equal(appendTimestamp('Lesson notes\n', 75), 'Lesson notes\n[01:15] ');
+});
+
+
+test('focus mode hides YouTube catalogue entries when requested', () => {
+  const rows = [{ id: 1, isLocal: true }, { id: 2, isLocal: false, youtube_id: 'abcdefghijk' }];
+  assert.deepEqual(filterVideosForFocus(rows, { enabled: true, hideYouTube: true }), [rows[0]]);
+  assert.deepEqual(filterVideosForFocus(rows, { enabled: false, hideYouTube: true }), rows);
+});
+
+test('recommendation visibility follows enabled focus preferences', () => {
+  assert.equal(shouldShowRecommendations({ enabled: true, hideRecommendations: true }), false);
+  assert.equal(shouldShowRecommendations({ enabled: false, hideRecommendations: true }), true);
+  assert.equal(shouldShowRecommendations({ enabled: true, hideRecommendations: false }), true);
+});
+
+test('rejects invalid progress samples and clamps valid progress', () => {
+  assert.equal(normalizeProgressSample(10, 0), null);
+  assert.equal(normalizeProgressSample(-1, 100), null);
+  assert.deepEqual(normalizeProgressSample(120, 100), { positionSeconds: 100, durationSeconds: 100, completed: true });
 });
