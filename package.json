@@ -10,7 +10,8 @@
         "start": "electron .",
         "build": "vite build",
         "dist": "npm run build && electron-builder --win nsis",
-        "postinstall": "electron-builder install-app-deps"
+        "postinstall": "electron-builder install-app-deps",
+        "test": "node --test"
     },
     "dependencies": {
         "@capacitor-community/sqlite": "^8.1.1",
