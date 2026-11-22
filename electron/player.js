@@ -193,7 +193,9 @@ function initializeYouTubePlayer() {
   console.log('[LocalTube Player] Loading YouTube video:', youtubeVideoId);
   video.style.display = 'none';
   youtube.style.display = 'block';
-  showStatus('Loading YouTube player...');
+  // Do not paint a generic loading overlay over YouTube content.
+  // The embedded player renders its own loading state; our overlay is reserved
+  // for actionable playback errors only.
 
   function captureYouTubeProgress(force = false) {
     if (!youtubePlayer) return;
