@@ -444,8 +444,8 @@ function App() {
         : await api.saveNotes(exportPayload);
 
       if (!result.canceled) {
-        setNotesPath(result.filePath);
-        setMessage('Notes saved successfully.');
+        setNotesPath(result.fileName || result.filePath);
+        setMessage('Notes exported successfully.');
       }
     } catch (error) {
       setMessage(`Could not save notes: ${error.message}`);
