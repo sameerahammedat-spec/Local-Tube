@@ -44,6 +44,7 @@ function App() {
   const [tags, setTags] = useState('');
   const [message, setMessage] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+  const [playbackTime, setPlaybackTime] = useState(0);
 
   // Open a video in the dedicated LocalTube player window.
   async function openVideo(video) {
@@ -156,6 +157,34 @@ function App() {
       setMessage(error.message);
     });
   }, [page, query, bookmarksOnly, activeChannel]);
+
+  // Receive playback timestamps from the separate Electron player window.
+  useEffect(() => {
+    if (!selected || typeof api.onPlayerTime !== 'function') return undefined;
+
+    const unsubscribe = api.onPlayerTime(payload => {
+      if (Number(payload?.videoId) === Number(selected.id)) {
+        setPlaybackTime(Math.max(0, Number(payload.positionSeconds) || 0));
+      }
+    });
+
+    return typeof unsubscribe === 'function' ? unsubscribe : undefined;
+  }, [selected?.id]);
+
+  // Refresh Continue Watching when the separate player closes or saves history.
+  useEffect(() => {
+    if (typeof api.onHistoryUpdated !== 'function') return undefined;
+
+    const unsubscribe = api.onHistoryUpdated(() => {
+      if (typeof api.getHistory === 'function') {
+        api.getHistory(20).then(setHistory).catch(error => {
+          console.warn('[LocalTube] History refresh failed:', error);
+        });
+      }
+    });
+
+    return typeof unsubscribe === 'function' ? unsubscribe : undefined;
+  }, []);
 
   // Load notes and tags whenever the selected video changes.
   useEffect(() => {
@@ -338,11 +367,18 @@ function App() {
   }
 
   function addTimestamp() {
-    // The player is in a separate window, so its current playback
-    // position is not available in this renderer yet.
-    setMessage(
-      'Timestamp capture from the separate player will be connected in a later update.'
-    );
+    if (!selected) return;
+
+    const totalSeconds = Math.max(0, Math.floor(playbackTime));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    const timestamp = `[${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}]`;
+
+    setNotes(current => {
+      const separator = current && !current.endsWith('\n') ? '\n' : '';
+      return `${current}${separator}${timestamp} `;
+    });
+    setMessage(`Timestamp ${timestamp} inserted.`);
   }
 
   const selectedChannel = channels.find(
