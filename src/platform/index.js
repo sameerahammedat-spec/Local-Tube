@@ -496,6 +496,9 @@ async function androidGetHistory(limit = 30) {
       INNER JOIN videos v
         ON v.id = h.video_id
 
+      WHERE h.completed = 0
+        AND h.position_seconds > 0
+
       ORDER BY h.last_watched_at DESC
 
       LIMIT ?
@@ -1023,6 +1026,11 @@ return playbackResult;
   }
 
   // Local video playback.
+  const fileCheck = await LocalMedia.fileExists({ path: video.file_path });
+  if (!fileCheck?.exists) {
+    throw new Error('This local video file is missing or cannot be read. Re-import it to restore playback.');
+  }
+
   const id = String(video.id);
 
   let checkpoint = {
