@@ -264,6 +264,19 @@ function initializeYouTubePlayer() {
           }
         }
       });
+
+      // Poll player state as a fallback to event callbacks. This keeps progress
+      // persistence working even if an embed state event is missed.
+      startProgressTimer(() => {
+        try {
+          if (youtubePlayer?.getPlayerState?.() === YT.PlayerState.PLAYING) {
+            hideStatus();
+            captureYouTubeProgress(false);
+          }
+        } catch (error) {
+          // The iframe may not be ready yet; the next poll will retry.
+        }
+      });
     } catch (error) {
       showError(`Could not initialize YouTube player: ${error.message}`);
     }
