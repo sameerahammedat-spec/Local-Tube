@@ -1,4 +1,6 @@
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
@@ -55,4 +57,12 @@ test('restarts completed, invalid, or out-of-range playback records', () => {
   assert.equal(getSafeResumePosition({
     position_seconds: 20, duration_seconds: 0, completed: 0
   }), 0);
+});
+
+test('YouTube player does not render a generic loading overlay over video', () => {
+  const playerSource = readFileSync(
+    resolve(process.cwd(), 'electron/player.js'),
+    'utf8'
+  );
+  assert.doesNotMatch(playerSource, /showStatus\(['"]Loading YouTube player\.\.\.['"]\)/);
 });
