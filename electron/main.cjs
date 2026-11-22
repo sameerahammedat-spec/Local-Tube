@@ -3,6 +3,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const Database = require('better-sqlite3');
+const { normalizeProgressPayload, getSafeResumePosition } = require('./playback-progress.cjs');
 
 const dataDir = path.join(app.getPath('userData'), 'LocalTube');
 
@@ -280,19 +281,16 @@ ipcMain.handle('history:list', (_event, limit = 20) => {
 // Save playback progress reported by the player window.
 ipcMain.on('player:progress', (_event, payload = {}) => {
   try {
-    const videoId = Number(payload.videoId);
-    const position = Math.max(0, Number(payload.positionSeconds) || 0);
-    const duration = Math.max(0, Number(payload.durationSeconds) || 0);
+    const progress = normalizeProgressPayload(payload);
+    if (!progress) return;
 
-    if (!Number.isInteger(videoId) || videoId <= 0) return;
+    const { videoId, positionSeconds: position, durationSeconds: duration, completed } = progress;
 
     const exists = getDb().prepare(
       'SELECT id FROM videos WHERE id = ?'
     ).get(videoId);
 
     if (!exists) return;
-
-    const completed = duration > 0 && position / duration >= 0.9 ? 1 : 0;
 
     getDb().prepare(`
       INSERT INTO watch_history(
@@ -916,10 +914,7 @@ ipcMain.handle('player:open', async (_event, videoId) => {
     WHERE video_id = ?
   `).get(Number(videoId));
 
-  const resumeSeconds =
-    savedProgress && !savedProgress.completed
-      ? Math.max(0, Number(savedProgress.position_seconds) || 0)
-      : 0;
+  const resumeSeconds = getSafeResumePosition(savedProgress);
 
   // Determine the playback source before creating the player window.
   let playerType;
