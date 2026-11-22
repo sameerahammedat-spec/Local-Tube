@@ -298,6 +298,15 @@ public class YouTubePlayerActivity extends Activity {
         runOnUiThread(() -> {
             if (statusView != null) {
                 statusView.setText(message);
+                statusView.setVisibility(View.VISIBLE);
+            }
+        });
+    }
+
+    private void hideStatus() {
+        runOnUiThread(() -> {
+            if (statusView != null) {
+                statusView.setVisibility(View.GONE);
             }
         });
     }
@@ -325,7 +334,7 @@ public class YouTubePlayerActivity extends Activity {
         @JavascriptInterface
         public void onPlayerStatus(String status) {
             if ("ready".equals(status)) {
-                updateStatus("YouTube player ready. Press Play to start.");
+                hideStatus();
 
                 runOnUiThread(() -> {
                     if (progressBar != null) {
@@ -334,10 +343,10 @@ public class YouTubePlayerActivity extends Activity {
                 });
 
             } else if ("playing".equals(status)) {
-                updateStatus("Playing");
+                hideStatus();
 
             } else if ("paused".equals(status)) {
-                updateStatus("Paused");
+                hideStatus();
 
             } else if ("ended".equals(status)) {
                 synchronized (YouTubePlayerActivity.this) {
@@ -348,7 +357,7 @@ public class YouTubePlayerActivity extends Activity {
                     }
                 }
 
-                updateStatus("Video finished");
+                hideStatus();
 
             } else if (status != null && status.startsWith("error:")) {
                 String code = status.substring("error:".length());
