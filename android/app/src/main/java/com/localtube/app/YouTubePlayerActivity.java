@@ -3,6 +3,7 @@ package com.localtube.app;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.os.Build;
 import android.content.Intent;
 import android.os.Bundle;
 import android.view.Gravity;
@@ -10,6 +11,9 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
+import android.webkit.PermissionRequest;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceError;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -133,19 +137,88 @@ public class YouTubePlayerActivity extends Activity {
             "LocalTubeBridge"
         );
 
-        webView.setWebChromeClient(new WebChromeClient());
+        // The embedded player must never create a browser-like browsing surface.
+        // Pop-up windows (including YouTube logo links) are always denied.
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onCreateWindow(
+                WebView view,
+                boolean isDialog,
+                boolean isUserGesture,
+                android.os.Message resultMsg
+            ) {
+                return false;
+            }
+
+            @Override
+            public void onPermissionRequest(PermissionRequest request) {
+                request.deny();
+            }
+        });
 
         webView.setWebViewClient(new WebViewClient() {
+            private boolean isLocalTubeDocument(String url) {
+                if (url == null) return false;
+                return url.equals("https://localhost/") ||
+                    url.startsWith("https://localhost/");
+            }
+
+            private boolean shouldBlockTopLevel(String url) {
+                // The top-level document is only the generated LocalTube player.
+                // YouTube remains available inside its single-video iframe.
+                return !isLocalTubeDocument(url);
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(
+                WebView view,
+                WebResourceRequest request
+            ) {
+                if (!request.isForMainFrame()) {
+                    return false; // Allow the embedded YouTube player resources.
+                }
+
+                String url = request.getUrl() == null
+                    ? ""
+                    : request.getUrl().toString();
+
+                if (shouldBlockTopLevel(url)) {
+                    android.util.Log.w(
+                        "LocalTube",
+                        "Blocked top-level player navigation: " + url
+                    );
+                    updateStatus("Navigation is disabled in LocalTube.");
+                    return true;
+                }
+
+                return false;
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                if (shouldBlockTopLevel(url)) {
+                    android.util.Log.w(
+                        "LocalTube",
+                        "Blocked legacy player navigation: " + url
+                    );
+                    updateStatus("Navigation is disabled in LocalTube.");
+                    return true;
+                }
+                return false;
+            }
+
             @Override
             public void onPageFinished(WebView view, String url) {
-                updateStatus("Loading YouTube player...");
+                if (isLocalTubeDocument(url)) {
+                    updateStatus("Loading YouTube player...");
+                }
             }
 
             @Override
             public void onReceivedError(
                 WebView view,
-                android.webkit.WebResourceRequest request,
-                android.webkit.WebResourceError error
+                WebResourceRequest request,
+                WebResourceError error
             ) {
                 if (request.isForMainFrame()) {
                     updateStatus(
