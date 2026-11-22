@@ -455,6 +455,8 @@ function App() {
     channel => channel.channelId === activeChannel
   );
 
+  const featuredVideo = recommendations[0] || history[0] || videos[0] || null;
+
   const localCount = useMemo(
     () => videos.filter(video => video.isLocal).length,
     [videos]
@@ -612,14 +614,26 @@ function App() {
 
         {page === 'home' && (
           <section className="library-section mobile-home-page">
-            <div className="mobile-hero">
+            <div
+              className={`mobile-hero ${featuredVideo ? 'has-featured-video' : ''}`}
+              style={featuredVideo?.thumbnail_url ? {
+                backgroundImage: `linear-gradient(90deg,rgba(5,8,16,.98) 0%,rgba(5,8,16,.78) 46%,rgba(5,8,16,.2) 100%),linear-gradient(0deg,#080b12 0%,transparent 58%),url("${featuredVideo.thumbnail_url}")`
+              } : undefined}
+            >
               <div className="mobile-hero-copy">
-                <span className="eyebrow">YOUR PERSONAL VIDEO SPACE</span>
-                <h2>Less scrolling.<br />More meaningful watching.</h2>
-                <p>Your own library, available whenever you need it.</p>
-                <button className="primary-btn" onClick={importLocalFiles}>
-                  <Plus size={17} /> Add videos
-                </button>
+                <span className="eyebrow">{featuredVideo ? 'FEATURED IN YOUR LIBRARY' : 'YOUR PERSONAL VIDEO SPACE'}</span>
+                <h2>{featuredVideo ? featuredVideo.title : <>Less scrolling.<br />More meaningful watching.</>}</h2>
+                <p>{featuredVideo ? (featuredVideo.channel_title || 'Continue from your personal collection') : 'Your own library, available whenever you need it.'}</p>
+                <div className="hero-actions">
+                  {featuredVideo && (
+                    <button className="primary-btn" onClick={() => openVideo(featuredVideo)}>
+                      <Play size={17} fill="currentColor" /> Play featured
+                    </button>
+                  )}
+                  <button className="outline-btn" onClick={importLocalFiles}>
+                    <Plus size={17} /> Add videos
+                  </button>
+                </div>
               </div>
             </div>
 
