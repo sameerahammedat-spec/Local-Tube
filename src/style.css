@@ -551,3 +551,17 @@ input,textarea{background:#0d1421;border-color:#2b3549;color:#f2f5fa}
  .focus-banner{padding:23px}.focus-banner h2{font-size:27px}
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+
+
+/* Clear unavailable-file feedback without making the card look interactive. */
+.video-card.unavailable {
+  opacity: .58;
+  cursor: not-allowed;
+}
+.video-card.unavailable .source-chip {
+  background: rgba(185, 55, 72, .92);
+  color: #fff;
+}
+.video-card:disabled .card-play-icon {
+  display: none;
+}
