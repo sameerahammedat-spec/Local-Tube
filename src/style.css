@@ -837,3 +837,20 @@ body{
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
 }
+
+
+/* Premium empty-state treatment for the watch studio. */
+.studio-welcome{min-height:520px;justify-content:center;align-items:flex-start;text-align:left;padding:28px 25px}
+.studio-orbit{
+  width:68px;height:68px;display:grid;place-items:center;margin-bottom:25px;border-radius:21px;
+  color:#c9baff;background:radial-gradient(circle at 35% 25%,#55468c,#1b2340 72%);
+  border:1px solid #a28bff45;box-shadow:0 0 0 9px #8a70ff0d,0 16px 40px #0006;
+}
+.studio-welcome>.eyebrow{font-size:8px;letter-spacing:1.8px;color:#9b8aff}
+.studio-welcome h3{font-size:25px;line-height:1.12;letter-spacing:-.9px;margin:12px 0}
+.studio-welcome p{max-width:290px;color:#96a4bb;font-size:11px;line-height:1.8;margin:0}
+.studio-steps{display:flex;flex-direction:column;gap:12px;margin:25px 0;color:#aebbd0}
+.studio-steps span{display:flex;align-items:center;gap:9px;font-size:8px;font-weight:900;letter-spacing:1.2px}
+.studio-steps svg{color:#a38cff}
+.studio-import{min-height:40px;padding:0 13px;color:#d9d1ff;background:#1b2032;border-color:#51477b;font-size:9px}
+@media(max-width:700px){.studio-welcome{min-height:340px;padding:23px 18px}.studio-orbit{width:56px;height:56px;margin-bottom:18px}.studio-welcome h3{font-size:22px}}
