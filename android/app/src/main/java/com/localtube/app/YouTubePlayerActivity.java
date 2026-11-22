@@ -29,6 +29,7 @@ public class YouTubePlayerActivity extends Activity {
 
     private String videoId;
     private String videoTitle;
+    private double startPositionSeconds = 0;
 
     private double lastPositionSeconds = 0;
     private double lastDurationSeconds = 0;
@@ -41,6 +42,7 @@ public class YouTubePlayerActivity extends Activity {
 
         videoId = getIntent().getStringExtra("videoId");
         videoTitle = getIntent().getStringExtra("title");
+        startPositionSeconds = Math.max(0, getIntent().getDoubleExtra("startPositionSeconds", 0));
 
         if (videoTitle == null || videoTitle.trim().isEmpty()) {
             videoTitle = "LocalTube";
@@ -66,7 +68,7 @@ public class YouTubePlayerActivity extends Activity {
 
         webView.loadDataWithBaseURL(
             "https://localhost/",
-            buildPlayerHtml(videoId),
+            buildPlayerHtml(videoId, startPositionSeconds),
             "text/html",
             "UTF-8",
             null
@@ -235,7 +237,7 @@ public class YouTubePlayerActivity extends Activity {
         });
     }
 
-    private String buildPlayerHtml(String id) {
+    private String buildPlayerHtml(String id, double startSeconds) {
         return "<!doctype html>"
             + "<html><head>"
             + "<meta name='viewport' content='width=device-width,"
@@ -264,10 +266,11 @@ public class YouTubePlayerActivity extends Activity {
             + "player=new YT.Player('player',{"
             + "width:'100%',height:'100%',"
             + "videoId:'" + id + "',"
-            + "playerVars:{autoplay:0,controls:1,playsinline:1,rel:0,"
+            + "playerVars:{autoplay:0,controls:1,playsinline:1,rel:0,start:" + Math.floor(startSeconds) + ","
             + "fs:1,enablejsapi:1,origin:'https://localhost'},"
             + "events:{"
             + "onReady:function(){"
+            + "if(" + Math.floor(startSeconds) + ">0){player.seekTo(" + Math.floor(startSeconds) + ",true);}"
             + "report('ready');"
             + "if(progressTimer===null){"
             + "progressTimer=setInterval(reportProgress,3000);"
