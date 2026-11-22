@@ -973,13 +973,25 @@ async function androidOpenPlayer(videoId) {
       );
     }
 
-    // The current YouTubePlayer native implementation returns
-    // when the player is launched. It does not yet return the
-    // final playback position. See the implementation note below.
-   const playbackResult = await YouTubePlayer.play({
-  videoId: video.youtube_id,
-  title: video.title || 'LocalTube'
-});
+    const historyResult = await db.query(
+      `SELECT position_seconds, duration_seconds, completed
+       FROM watch_history WHERE video_id = ? LIMIT 1`,
+      [Number(video.id)]
+    );
+    const saved = historyResult.values?.[0];
+    const savedPosition = Math.max(0, asNumber(saved?.position_seconds));
+    const savedDuration = Math.max(0, asNumber(saved?.duration_seconds));
+    const resumePositionSeconds =
+      saved && !Boolean(saved.completed) && savedDuration > 0 &&
+      savedPosition < savedDuration
+        ? savedPosition
+        : 0;
+
+    const playbackResult = await YouTubePlayer.play({
+      videoId: video.youtube_id,
+      title: video.title || 'LocalTube',
+      startPositionSeconds: resumePositionSeconds
+    });
 
 if (
   playbackResult &&
