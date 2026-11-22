@@ -1095,6 +1095,39 @@ function unavailable(feature) {
   };
 }
 
+async function androidGetFocusSettings() {
+  const db = await getAndroidDb();
+  const result = await db.query(
+    'SELECT key, value FROM settings WHERE key LIKE ?',
+    ['focus:%']
+  );
+  const settings = {};
+  for (const row of result.values || []) {
+    const key = String(row.key || '').replace(/^focus:/, '');
+    try {
+      settings[key] = JSON.parse(row.value);
+    } catch (error) {
+      console.warn('[LocalTube] Ignoring invalid focus preference:', key);
+    }
+  }
+  return settings;
+}
+
+async function androidSaveFocusSettings(values = {}) {
+  const db = await getAndroidDb();
+  const allowed = ['enabled', 'hideYouTube', 'hideRecommendations', 'hideShorts'];
+  for (const key of allowed) {
+    if (typeof values[key] === 'boolean') {
+      await db.run(
+        `INSERT INTO settings (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        [`focus:${key}`, JSON.stringify(values[key])]
+      );
+    }
+  }
+  return { saved: true };
+}
+
 function createAndroidApi() {
   return {
     exportNotes: androidExportNotes,
@@ -1120,6 +1153,8 @@ function createAndroidApi() {
     getHistory: androidGetHistory,
     recordProgress: androidRecordProgress,
     getRecommendations: androidGetRecommendations,
+    getFocusSettings: androidGetFocusSettings,
+    saveFocusSettings: androidSaveFocusSettings,
 
     getDataPath: async () =>
       'LocalTube Android private database'
