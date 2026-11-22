@@ -342,27 +342,6 @@ positionSeconds
 console.error('[LocalTube] Timestamp event failed:', error);
 }
 });
-// Receive playback timestamp from the player window.
-ipcMain.on('player:time', (_event, payload = {}) => {
-  const videoId = Number(payload.videoId);
-
-  const position = Math.max(
-    0,
-    Number(payload.positionSeconds) || 0
-  );
-
-  if (!Number.isInteger(videoId) || videoId <= 0) {
-    return;
-  }
-
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('player:time', {
-      videoId,
-      positionSeconds: position
-    });
-  }
-});
-
 // List imported YouTube channels.
 ipcMain.handle('channels:list', () => {
   return listChannels();
