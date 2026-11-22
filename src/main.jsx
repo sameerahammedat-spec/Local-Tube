@@ -665,25 +665,27 @@ function App() {
               <p className="mobile-hint">Your recently watched videos will appear here.</p>
             )}
 
-            {showRecommendations && <div className="section-head mobile-shelf-heading">
-              <div>
-                <h2>Recommended from your library</h2>
-                <p>Suggestions from content you've already imported.</p>
-              </div>
-            </div>
+            {showRecommendations && (
+              <>
+                <div className="section-head mobile-shelf-heading">
+                  <div>
+                    <h2>Recommended from your library</h2>
+                    <p>Suggestions from content you've already imported.</p>
+                  </div>
+                </div>
 
-            {showRecommendations && <>
-            {((visibleRecommendations.length ? visibleRecommendations : visibleVideos).length > 0) ? (
-              <VideoGrid
-                videos={(visibleRecommendations.length ? visibleRecommendations : visibleVideos).slice(0, 8)}
-                selected={selected}
-                onSelect={setSelected}
-                onPlay={openVideo}
-              />
-            ) : (
-              <p className="mobile-hint">Import videos to build your collection.</p>
+                {(visibleRecommendations.length ? visibleRecommendations : visibleVideos).length > 0 ? (
+                  <VideoGrid
+                    videos={(visibleRecommendations.length ? visibleRecommendations : visibleVideos).slice(0, 8)}
+                    selected={selected}
+                    onSelect={setSelected}
+                    onPlay={openVideo}
+                  />
+                ) : (
+                  <p className="mobile-hint">Import videos to build your collection.</p>
+                )}
+              </>
             )}
-            </>}
 
             <div className="section-head mobile-shelf-heading">
               <div>
