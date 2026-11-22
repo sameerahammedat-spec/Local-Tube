@@ -399,21 +399,28 @@ public class YouTubePlayerActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (webView != null) {
-            webView.evaluateJavascript(
-                "(function(){try{"
-                + "if(player&&player.getCurrentTime){"
-                + "LocalTubeBridge.onProgress("
-                + "player.getCurrentTime()||0,"
-                + "player.getDuration()||0);"
-                + "}}catch(e){}})();",
-                null
-            );
-
-            webView.stopLoading();
+        if (webView == null) {
+            finishWithProgress();
+            return;
         }
 
-        finishWithProgress();
+        // evaluateJavascript is asynchronous. Finish only after the JavaScript
+        // bridge has delivered the final position to PlayerBridge; otherwise
+        // the Activity result can contain the previous one-second checkpoint.
+        webView.evaluateJavascript(
+            "(function(){try{"
+            + "if(player&&player.getCurrentTime&&player.getDuration){"
+            + "LocalTubeBridge.onProgress("
+            + "player.getCurrentTime()||0,"
+            + "player.getDuration()||0);"
+            + "}}catch(e){}})();",
+            value -> {
+                if (webView != null) {
+                    webView.stopLoading();
+                }
+                finishWithProgress();
+            }
+        );
     }
 
     @Override
