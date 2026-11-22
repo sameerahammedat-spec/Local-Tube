@@ -317,10 +317,8 @@ public class YouTubePlayerActivity extends Activity {
                 lastPositionSeconds = Math.max(0, position);
                 lastDurationSeconds = Math.max(0, duration);
 
-                if (lastDurationSeconds > 0 &&
-                    lastPositionSeconds / lastDurationSeconds >= 0.9) {
-                    completed = true;
-                }
+                completed = lastDurationSeconds > 0 &&
+                    lastPositionSeconds / lastDurationSeconds >= 0.9;
             }
         }
 
