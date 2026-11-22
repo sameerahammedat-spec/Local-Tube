@@ -333,11 +333,11 @@ function App() {
 
       setVideos(importedVideos);
 
-      setMessage(
-        result.addedCount > 0
-          ? `Successfully imported ${result.addedCount} new video(s).`
-          : 'No new videos imported. The files may already be in your library.'
-      );
+      const importSummary = `${result.addedCount} added, ${Number(result.skippedCount) || 0} skipped.`;
+      const importErrors = Array.isArray(result.errors) && result.errors.length
+        ? ` ${result.errors.length} file(s) failed: ${result.errors.slice(0, 3).join(' | ')}`
+        : '';
+      setMessage(`Import finished: ${importSummary}${importErrors}`);
     } catch (error) {
       console.error('[LocalTube] Local import failed:', error);
       setMessage(`Import failed: ${error.message || error}`);
@@ -943,7 +943,7 @@ function App() {
                 </span>
 
                 <span className="local-indicator">
-                  Saved on this PC
+                  {window.localTube ? 'Saved on this PC' : 'Saved in LocalTube'}
                 </span>
               </div>
 
@@ -968,7 +968,7 @@ function App() {
               <div className="notes-footer">
                 <span>
                   {notesPath
-                    ? notesPath.split(/[\\/]/).pop()
+                    ? (notesPath.startsWith('localtube-note://') ? 'Saved in app database' : notesPath.split(/[\\/]/).pop())
                     : 'Not saved yet'}
                 </span>
 
