@@ -17,6 +17,7 @@ const titleElement = document.getElementById('title');
 let youtubePlayer = null;
 let progressTimer = null;
 let lastSavedAt = 0;
+let lastKnownYouTubeProgress = null;
 
 titleElement.textContent = title;
 
@@ -49,7 +50,11 @@ function saveProgress(position, duration, force = false) {
 
   const now = Date.now();
 
-  if (!force && now - lastSavedAt < 4000) return;
+  if (!force && now - lastSavedAt < 1000) return;
+
+  const safePosition = Number(position);
+  const safeDuration = Number(duration);
+  if (!Number.isFinite(safePosition) || !Number.isFinite(safeDuration) || safeDuration <= 0) return;
 
   lastSavedAt = now;
 
@@ -84,7 +89,7 @@ function stopProgressTimer() {
 
 function startProgressTimer(callback) {
   stopProgressTimer();
-  progressTimer = setInterval(callback, 3000);
+  progressTimer = setInterval(callback, 1000);
 }
 
 // ------------------------------------------
@@ -186,10 +191,35 @@ function initializeYouTubePlayer() {
   }
 
   console.log('[LocalTube Player] Loading YouTube video:', youtubeVideoId);
-
   video.style.display = 'none';
   youtube.style.display = 'block';
   showStatus('Loading YouTube player...');
+
+  function captureYouTubeProgress(force = false) {
+    if (!youtubePlayer) return;
+    try {
+      const position = Number(youtubePlayer.getCurrentTime());
+      const duration = Number(youtubePlayer.getDuration());
+
+      // YouTube can briefly return 0/NaN while initializing or tearing down.
+      // Never overwrite a valid saved position with those transient values.
+      if (Number.isFinite(position) && position >= 0 &&
+          Number.isFinite(duration) && duration > 0) {
+        lastKnownYouTubeProgress = { position, duration };
+      }
+
+      if (lastKnownYouTubeProgress) {
+        const saved = lastKnownYouTubeProgress;
+        saveProgress(saved.position, saved.duration, force);
+        reportPlayerTime(saved.position);
+      }
+    } catch (error) {
+      console.warn('[LocalTube Player] Could not capture YouTube progress:', error);
+      if (force && lastKnownYouTubeProgress) {
+        saveProgress(lastKnownYouTubeProgress.position, lastKnownYouTubeProgress.duration, true);
+      }
+    }
+  }
 
   window.onYouTubeIframeAPIReady = () => {
     try {
@@ -208,46 +238,26 @@ function initializeYouTubePlayer() {
           onReady: event => {
             console.log('[LocalTube Player] YouTube player ready.');
             hideStatus();
-
             if (startSeconds > 0) {
               event.target.seekTo(startSeconds, true);
             }
+            captureYouTubeProgress(true);
           },
-
           onStateChange: event => {
             if (event.data === YT.PlayerState.PLAYING) {
               hideStatus();
-
-              startProgressTimer(() => {
-                if (!youtubePlayer) return;
-
-                const position = youtubePlayer.getCurrentTime();
-                const duration = youtubePlayer.getDuration();
-
-                saveProgress(position, duration);
-                reportPlayerTime(position);
-              });
-
+              startProgressTimer(() => captureYouTubeProgress(false));
             } else {
               stopProgressTimer();
-
-              if (
-                event.data === YT.PlayerState.PAUSED ||
-                event.data === YT.PlayerState.ENDED
-              ) {
-                const position = youtubePlayer.getCurrentTime();
-                const duration = youtubePlayer.getDuration();
-
-                saveProgress(position, duration, true);
-                reportPlayerTime(position);
+              if (event.data === YT.PlayerState.PAUSED ||
+                  event.data === YT.PlayerState.ENDED) {
+                captureYouTubeProgress(true);
               }
-
               if (event.data === YT.PlayerState.ENDED) {
                 showStatus('Video completed.');
               }
             }
           },
-
           onError: event => {
             showError(
               `YouTube playback error (${event.data}). The video may be unavailable or embedding may be disabled.`
@@ -262,22 +272,16 @@ function initializeYouTubePlayer() {
 
   const apiScript = document.createElement('script');
   apiScript.src = 'https://www.youtube.com/iframe_api';
-
   apiScript.onerror = () => {
     showError('Could not load YouTube player API. Check your internet connection.');
   };
-
   document.head.appendChild(apiScript);
 
-  window.addEventListener('beforeunload', () => {
-    if (youtubePlayer?.getCurrentTime) {
-      const position = youtubePlayer.getCurrentTime();
-      const duration = youtubePlayer.getDuration();
-
-      saveProgress(position, duration, true);
-      reportPlayerTime(position);
-    }
-  });
+  // pagehide fires for window close as well as normal navigation. The latest
+  // valid sample is retained so iframe teardown cannot replace it with zero.
+  const persistOnClose = () => captureYouTubeProgress(true);
+  window.addEventListener('pagehide', persistOnClose);
+  window.addEventListener('beforeunload', persistOnClose);
 }
 
 // ------------------------------------------
