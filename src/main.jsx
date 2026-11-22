@@ -187,6 +187,14 @@ function App() {
     return () => { alive = false; };
   }, []);
 
+  useEffect(() => {
+    if (focusSettings.enabled && focusSettings.hideYouTube && page === 'channels') {
+      setPage('local');
+      setActiveChannel('');
+      setSelected(current => current && !current.isLocal ? null : current);
+    }
+  }, [focusSettings.enabled, focusSettings.hideYouTube, page]);
+
   async function updateFocusSetting(key, value) {
     const next = { ...focusSettings, [key]: value };
     setFocusSettings(next);
@@ -657,14 +665,15 @@ function App() {
               <p className="mobile-hint">Your recently watched videos will appear here.</p>
             )}
 
-            <div className="section-head mobile-shelf-heading">
+            {showRecommendations && <div className="section-head mobile-shelf-heading">
               <div>
                 <h2>Recommended from your library</h2>
                 <p>Suggestions from content you've already imported.</p>
               </div>
             </div>
 
-            {showRecommendations && ((visibleRecommendations.length ? visibleRecommendations : visibleVideos).length > 0) ? (
+            {showRecommendations && <>
+            {((visibleRecommendations.length ? visibleRecommendations : visibleVideos).length > 0) ? (
               <VideoGrid
                 videos={(visibleRecommendations.length ? visibleRecommendations : visibleVideos).slice(0, 8)}
                 selected={selected}
@@ -674,6 +683,7 @@ function App() {
             ) : (
               <p className="mobile-hint">Import videos to build your collection.</p>
             )}
+            </>}
 
             <div className="section-head mobile-shelf-heading">
               <div>
