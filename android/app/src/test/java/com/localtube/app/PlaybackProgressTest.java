@@ -21,7 +21,8 @@ public class PlaybackProgressTest {
         assertEquals(45000L, PlaybackProgress.safeResumePosition(45000L, 100000L));
     }
 
-    @Test public void clampsResumePositionToDuration() {
-        assertEquals(100000L, PlaybackProgress.safeResumePosition(120000L, 100000L));
+    @Test public void doesNotResumeWhenPositionExceedsDuration() {
+        // A position beyond the duration is invalid; treat it as completed and restart.
+        assertEquals(0L, PlaybackProgress.safeResumePosition(120000L, 100000L));
     }
 }
