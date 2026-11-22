@@ -759,8 +759,21 @@ ipcMain.handle('notes:loadPath', (_event, videoId) => {
 
 // Read notes file.
 ipcMain.handle('notes:read', (_event, filePath) => {
+  const requestedPath = String(filePath || '');
+  if (!requestedPath) return '';
+
+  // Only read note files previously selected through LocalTube's Save dialog.
+  // The renderer cannot use this bridge to read arbitrary files on the PC.
+  const allowed = getDb().prepare(
+    "SELECT value FROM settings WHERE key LIKE 'notes:%'"
+  ).all().some(row => path.resolve(row.value) === path.resolve(requestedPath));
+
+  if (!allowed) {
+    throw new Error('This file is not a saved LocalTube notes file.');
+  }
+
   try {
-    return fs.readFileSync(String(filePath), 'utf8');
+    return fs.readFileSync(requestedPath, 'utf8');
   } catch {
     return '';
   }
