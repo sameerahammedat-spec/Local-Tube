@@ -794,17 +794,22 @@ ipcMain.handle('notes:autoSave', (_event, payload = {}) => {
     'SELECT value FROM settings WHERE key = ?'
   ).get(`notes:${videoId}`)?.value || '';
 
-  // Update the existing TXT file if it is available.
-  if (savedPath && fs.existsSync(path.dirname(savedPath))) {
-    fs.writeFileSync(savedPath, content, 'utf8');
-  }
-
-  // Always keep an autosaved copy in SQLite.
+  // Persist the recovery draft first so an unavailable or read-only TXT
+  // destination can never prevent the user's latest notes from being saved.
   database.prepare(`
     INSERT INTO settings(key, value)
     VALUES(?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run(`notes-draft:${videoId}`, content);
+
+  // Keep the exported TXT file in sync when its destination is still writable.
+  if (savedPath && fs.existsSync(path.dirname(savedPath))) {
+    try {
+      fs.writeFileSync(savedPath, content, 'utf8');
+    } catch (error) {
+      console.warn('[LocalTube] Could not update exported notes file:', error);
+    }
+  }
 
   return {
     saved: true,
