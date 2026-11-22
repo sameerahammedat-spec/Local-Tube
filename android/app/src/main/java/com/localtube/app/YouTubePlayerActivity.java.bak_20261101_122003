@@ -1,0 +1,230 @@
+package com.localtube.app;
+
+import android.annotation.SuppressLint;
+import android.app.Activity;
+import android.os.Bundle;
+import android.view.Gravity;
+import android.view.ViewGroup;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebChromeClient;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.TextView;
+
+public class YouTubePlayerActivity extends Activity {
+
+    private WebView webView;
+    private TextView statusView;
+    private ProgressBar progressBar;
+
+    private String videoId;
+    private String videoTitle;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        videoId = getIntent().getStringExtra("videoId");
+        videoTitle = getIntent().getStringExtra("title");
+
+        if (videoTitle == null || videoTitle.trim().isEmpty()) {
+            videoTitle = "LocalTube";
+        }
+
+        if (videoId == null || !videoId.matches("[a-zA-Z0-9_-]{11}")) {
+            finish();
+            return;
+        }
+
+        buildScreen();
+        configureWebView();
+        webView.loadDataWithBaseURL(
+            "https://localhost/",
+            buildPlayerHtml(videoId),
+            "text/html",
+            "UTF-8",
+            null
+        );
+    }
+
+    private void buildScreen() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(0xFF101010);
+
+        TextView titleView = new TextView(this);
+        titleView.setText(videoTitle);
+        titleView.setTextColor(0xFFFFFFFF);
+        titleView.setTextSize(18);
+        titleView.setPadding(18, 16, 18, 12);
+        titleView.setMaxLines(2);
+        root.addView(titleView, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        statusView = new TextView(this);
+        statusView.setText("Connecting to YouTube...");
+        statusView.setTextColor(0xFFE0E0E0);
+        statusView.setTextSize(14);
+        statusView.setGravity(Gravity.CENTER);
+        statusView.setPadding(12, 8, 12, 8);
+        root.addView(statusView, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        progressBar = new ProgressBar(this);
+        root.addView(progressBar, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        webView = new WebView(this);
+        root.addView(webView, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            0,
+            1
+        ));
+
+        setContentView(root);
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private void configureWebView() {
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setMediaPlaybackRequiresUserGesture(true);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        settings.setSupportMultipleWindows(false);
+
+        webView.addJavascriptInterface(new PlayerBridge(), "LocalTubeBridge");
+        webView.setWebChromeClient(new WebChromeClient());
+
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                updateStatus("Loading YouTube player...");
+            }
+        });
+    }
+
+    private String buildPlayerHtml(String id) {
+        return "<!doctype html>"
+            + "<html><head>"
+            + "<meta name='viewport' content='width=device-width,"
+            + "initial-scale=1,maximum-scale=1,user-scalable=no'>"
+            + "<style>"
+            + "html,body{margin:0;padding:0;background:#000;width:100%;height:100%;}"
+            + "#player{width:100%;height:100%;}"
+            + "</style></head><body>"
+            + "<div id='player'></div>"
+            + "<script>"
+            + "var player;"
+            + "function report(s){"
+            + "try{LocalTubeBridge.onPlayerStatus(String(s));}catch(e){}"
+            + "}"
+            + "function onYouTubeIframeAPIReady(){"
+            + "player=new YT.Player('player',{"
+            + "width:'100%',height:'100%',"
+            + "videoId:'" + id + "',"
+            + "playerVars:{autoplay:0,controls:1,playsinline:1,rel:0,"
+            + "fs:1,enablejsapi:1},"
+            + "events:{"
+            + "onReady:function(){report('ready');},"
+            + "onStateChange:function(e){"
+            + "if(e.data===1)report('playing');"
+            + "else if(e.data===2)report('paused');"
+            + "else if(e.data===0)report('ended');"
+            + "},"
+            + "onError:function(e){report('error:'+e.data);}"
+            + "}"
+            + "});"
+            + "}"
+            + "</script>"
+            + "<script src='https://www.youtube.com/iframe_api'></script>"
+            + "</body></html>";
+    }
+
+    private void updateStatus(String message) {
+        runOnUiThread(() -> {
+            if (statusView != null) {
+                statusView.setText(message);
+            }
+        });
+    }
+
+    private class PlayerBridge {
+        @JavascriptInterface
+        public void onPlayerStatus(String status) {
+            if ("ready".equals(status)) {
+                updateStatus("YouTube player ready. Press Play to start.");
+                runOnUiThread(() -> {
+                    if (progressBar != null) progressBar.setVisibility(
+                        android.view.View.GONE
+                    );
+                });
+            } else if ("playing".equals(status)) {
+                updateStatus("Playing");
+            } else if ("paused".equals(status)) {
+                updateStatus("Paused");
+            } else if ("ended".equals(status)) {
+                updateStatus("Video finished");
+            } else if (status != null && status.startsWith("error:")) {
+                String code = status.substring("error:".length());
+                updateStatus(errorMessage(code));
+                runOnUiThread(() -> {
+                    if (progressBar != null) progressBar.setVisibility(
+                        android.view.View.GONE
+                    );
+                });
+            }
+        }
+    }
+
+    private String errorMessage(String code) {
+        switch (code) {
+            case "2":
+                return "YouTube rejected the video ID or player request.";
+            case "5":
+                return "This video cannot be played in the HTML5 player.";
+            case "100":
+                return "This video is unavailable or has been removed.";
+            case "101":
+            case "150":
+                return "The video owner does not allow embedded playback.";
+            case "153":
+                return "YouTube requires valid client identification for this playback.";
+            default:
+                return "YouTube playback error (" + code + ").";
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (webView != null) {
+            webView.stopLoading();
+        }
+        finish();
+        super.onBackPressed();
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (webView != null) {
+            webView.stopLoading();
+            webView.loadUrl("about:blank");
+            webView.removeJavascriptInterface("LocalTubeBridge");
+            webView.destroy();
+            webView = null;
+        }
+        super.onDestroy();
+    }
+}

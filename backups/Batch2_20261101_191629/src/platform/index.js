@@ -1,0 +1,673 @@
+import { registerPlugin, Capacitor } from '@capacitor/core';
+import { FilePicker } from '@capawesome/capacitor-file-picker';
+import { CapacitorSQLite, SQLiteConnection } from '@capacitor-community/sqlite';
+
+const LocalMedia = registerPlugin('LocalMedia');
+const LocalPlayer = registerPlugin('LocalPlayer');
+const YouTubePlayer = registerPlugin('YouTubePlayer');
+
+let androidDbPromise;
+
+async function getAndroidDb() {
+  if (!androidDbPromise) {
+    androidDbPromise = (async () => {
+      const sqlite = new SQLiteConnection(CapacitorSQLite);
+      const consistency = await sqlite.checkConnectionsConsistency();
+      const connection = await sqlite.isConnection('localtube', false);
+
+      let db;
+
+      if (consistency.result && connection.result) {
+        db = await sqlite.retrieveConnection('localtube', false);
+      } else {
+        db = await sqlite.createConnection(
+          'localtube', false, 'no-encryption', 1, false
+        );
+      }
+
+      await db.open();
+
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS videos (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          channel_title TEXT DEFAULT '',
+          channel_id TEXT DEFAULT '',
+          youtube_id TEXT DEFAULT '',
+          youtube_url TEXT DEFAULT '',
+          file_path TEXT DEFAULT '',
+          thumbnail_url TEXT DEFAULT '',
+          description TEXT DEFAULT '',
+          tags TEXT DEFAULT '',
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS videos_unique_local_path
+        ON videos(file_path) WHERE file_path <> '';
+
+        CREATE UNIQUE INDEX IF NOT EXISTS videos_unique_youtube_id
+        ON videos(youtube_id) WHERE youtube_id <> '';
+
+        CREATE TABLE IF NOT EXISTS bookmarks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          video_id INTEGER NOT NULL UNIQUE,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(video_id) REFERENCES videos(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS video_notes (
+          video_id INTEGER PRIMARY KEY,
+          content TEXT NOT NULL DEFAULT '',
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(video_id) REFERENCES videos(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS watch_history (
+          video_id INTEGER PRIMARY KEY,
+          position_seconds REAL NOT NULL DEFAULT 0,
+          duration_seconds REAL NOT NULL DEFAULT 0,
+          completed INTEGER NOT NULL DEFAULT 0,
+          last_watched_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(video_id) REFERENCES videos(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS watch_history_recent
+        ON watch_history(last_watched_at DESC);
+      `);
+
+      return db;
+    })().catch(error => {
+      androidDbPromise = null;
+      throw error;
+    });
+  }
+
+  return androidDbPromise;
+}
+
+function mapVideo(row) {
+  return {
+    ...row,
+    isLocal: Boolean(row.file_path),
+    bookmarked: Boolean(row.bookmarked),
+    fileExists: Boolean(row.file_path),
+    progressSeconds: Number(row.position_seconds || 0),
+    durationSeconds: Number(row.duration_seconds || 0),
+    completed: Boolean(row.completed)
+  };
+}
+
+async function androidListVideos(options = {}) {
+  const db = await getAndroidDb();
+  const {
+    type = 'all',
+    channelId = '',
+    query = '',
+    bookmarkedOnly = false
+  } = options || {};
+
+  let sql = `
+    SELECT v.*,
+      EXISTS (
+        SELECT 1 FROM bookmarks b WHERE b.video_id = v.id
+      ) AS bookmarked,
+      COALESCE(h.position_seconds, 0) AS position_seconds,
+      COALESCE(h.duration_seconds, 0) AS duration_seconds,
+      COALESCE(h.completed, 0) AS completed
+    FROM videos v
+    LEFT JOIN watch_history h ON h.video_id = v.id
+    WHERE 1 = 1
+  `;
+
+  const values = [];
+
+  if (type === 'local') {
+    sql += " AND v.file_path <> ''";
+  } else if (type === 'youtube') {
+    sql += " AND v.youtube_id <> '' AND v.file_path = ''";
+  }
+
+  if (channelId) {
+    sql += ' AND v.channel_id = ?';
+    values.push(String(channelId));
+  }
+
+  if (bookmarkedOnly) {
+    sql += `
+      AND EXISTS (
+        SELECT 1 FROM bookmarks b WHERE b.video_id = v.id
+      )
+    `;
+  }
+
+  if (query && String(query).trim()) {
+    sql += `
+      AND (
+        v.title LIKE ? OR
+        v.channel_title LIKE ? OR
+        v.tags LIKE ? OR
+        v.description LIKE ?
+      )
+    `;
+    const term = `%${String(query).trim()}%`;
+    values.push(term, term, term, term);
+  }
+
+  sql += ' ORDER BY v.created_at DESC, v.id DESC LIMIT 1000';
+
+  const result = await db.query(sql, values);
+  return (result.values || []).map(mapVideo);
+}
+
+async function androidListChannels() {
+  const db = await getAndroidDb();
+
+  const result = await db.query(`
+    SELECT channel_id AS channelId,
+      channel_title AS channelTitle,
+      COUNT(*) AS videoCount,
+      MAX(created_at) AS importedAt
+    FROM videos
+    WHERE youtube_id <> ''
+      AND file_path = ''
+      AND channel_id <> ''
+    GROUP BY channel_id, channel_title
+    ORDER BY channel_title COLLATE NOCASE
+  `);
+
+  return result.values || [];
+}
+
+async function androidToggleBookmark(id) {
+  const db = await getAndroidDb();
+
+  const existing = await db.query(
+    'SELECT id FROM bookmarks WHERE video_id = ?',
+    [Number(id)]
+  );
+
+  if (existing.values?.length) {
+    await db.run('DELETE FROM bookmarks WHERE video_id = ?', [Number(id)]);
+  } else {
+    await db.run(
+      'INSERT OR IGNORE INTO bookmarks(video_id) VALUES(?)',
+      [Number(id)]
+    );
+  }
+
+  return androidListVideos();
+}
+
+async function androidUpdateTags({ id, tags }) {
+  const db = await getAndroidDb();
+
+  await db.run(
+    'UPDATE videos SET tags = ? WHERE id = ?',
+    [String(tags || '').slice(0, 1000), Number(id)]
+  );
+
+  return androidListVideos();
+}
+
+async function androidLoadNotesPath(videoId) {
+  return `localtube-note://${Number(videoId)}`;
+}
+
+async function androidReadNotes(notePath) {
+  const match = String(notePath).match(/^localtube-note:\/\/(\d+)$/);
+  if (!match) return '';
+
+  const db = await getAndroidDb();
+  const result = await db.query(
+    'SELECT content FROM video_notes WHERE video_id = ?',
+    [Number(match[1])]
+  );
+
+  return result.values?.[0]?.content || '';
+}
+
+async function androidSaveNotes({ videoId, content }) {
+  const db = await getAndroidDb();
+
+  await db.run(`
+    INSERT INTO video_notes(video_id, content, updated_at)
+    VALUES(?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(video_id)
+    DO UPDATE SET
+      content = excluded.content,
+      updated_at = CURRENT_TIMESTAMP
+  `, [Number(videoId), String(content || '')]);
+
+  return {
+    canceled: false,
+    filePath: `localtube-note://${Number(videoId)}`
+  };
+}
+
+async function androidRecordProgress({
+  videoId,
+  positionSeconds = 0,
+  durationSeconds = 0
+}) {
+  const db = await getAndroidDb();
+  const position = Math.max(0, Number(positionSeconds) || 0);
+  const duration = Math.max(0, Number(durationSeconds) || 0);
+  const completed = duration > 0 && position / duration >= 0.9 ? 1 : 0;
+
+  await db.run(`
+    INSERT INTO watch_history (
+      video_id, position_seconds, duration_seconds,
+      completed, last_watched_at
+    )
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(video_id)
+    DO UPDATE SET
+      position_seconds = excluded.position_seconds,
+      duration_seconds = excluded.duration_seconds,
+      completed = excluded.completed,
+      last_watched_at = CURRENT_TIMESTAMP
+  `, [Number(videoId), position, duration, completed]);
+
+  return { success: true, completed: Boolean(completed) };
+}
+
+async function androidGetHistory(limit = 30) {
+  const db = await getAndroidDb();
+
+  const result = await db.query(`
+    SELECT v.*,
+      COALESCE(h.position_seconds, 0) AS position_seconds,
+      COALESCE(h.duration_seconds, 0) AS duration_seconds,
+      COALESCE(h.completed, 0) AS completed,
+      h.last_watched_at,
+      EXISTS (
+        SELECT 1 FROM bookmarks b WHERE b.video_id = v.id
+      ) AS bookmarked
+    FROM watch_history h
+    INNER JOIN videos v ON v.id = h.video_id
+    ORDER BY h.last_watched_at DESC
+    LIMIT ?
+  `, [Math.max(1, Math.min(100, Number(limit) || 30))]);
+
+  return (result.values || []).map(mapVideo);
+}
+
+async function androidGetRecommendations(limit = 20) {
+  const db = await getAndroidDb();
+
+  const result = await db.query(`
+    SELECT v.*,
+      EXISTS (
+        SELECT 1 FROM bookmarks b WHERE b.video_id = v.id
+      ) AS bookmarked,
+      COALESCE(h.position_seconds, 0) AS position_seconds,
+      COALESCE(h.duration_seconds, 0) AS duration_seconds,
+      COALESCE(h.completed, 0) AS completed
+    FROM videos v
+    LEFT JOIN watch_history h ON h.video_id = v.id
+    WHERE v.id NOT IN (
+      SELECT video_id FROM watch_history
+      WHERE completed = 1
+    )
+    ORDER BY
+      CASE WHEN EXISTS (
+        SELECT 1 FROM bookmarks b WHERE b.video_id = v.id
+      ) THEN 0 ELSE 1 END,
+      CASE WHEN h.video_id IS NULL THEN 0 ELSE 1 END,
+      v.created_at DESC
+    LIMIT ?
+  `, [Math.max(1, Math.min(100, Number(limit) || 20))]);
+
+  return (result.values || []).map(mapVideo);
+}
+
+async function androidImportFiles() {
+  const db = await getAndroidDb();
+  const pickerResult = await FilePicker.pickVideos({ limit: 0 });
+  const files = pickerResult?.files || [];
+
+  if (!files.length) return { addedCount: 0, errors: [] };
+
+  let addedCount = 0;
+  const errors = [];
+
+  for (const file of files) {
+    try {
+      if (!file.path) {
+        throw new Error(`No accessible URI for ${file.name || 'video'}`);
+      }
+
+      const originalName = file.name || 'video';
+      const title = originalName.replace(/\.[^/.]+$/, '') || 'Untitled video';
+
+      const copied = await LocalMedia.copyVideo({
+        uri: file.path,
+        fileName: originalName
+      });
+
+      if (!copied?.path) {
+        throw new Error('Android did not return the copied video path.');
+      }
+
+      await db.run(`
+        INSERT INTO videos (
+          title, channel_title, channel_id, youtube_id,
+          youtube_url, file_path, thumbnail_url, description, tags
+        ) VALUES (?, '', '', '', '', ?, '', '', '')
+      `, [title, copied.path]);
+
+      addedCount++;
+    } catch (error) {
+      console.error('[LocalTube] Import failed:', file.name, error);
+      errors.push(`${file.name || 'Video'}: ${error.message || error}`);
+    }
+  }
+
+  return { addedCount, errors };
+}
+
+
+// Android YouTube Data API v3 channel importer.
+async function androidFetchChannel({ channelUrl, apiKey }) {
+  const key = String(apiKey || '').trim();
+  const input = String(channelUrl || '').trim();
+
+  if (!key) throw new Error('Enter your YouTube Data API key.');
+  if (!input) throw new Error('Enter a YouTube channel URL or handle.');
+
+  let channelId = '';
+  let handle = '';
+
+  const idMatch = input.match(/UC[a-zA-Z0-9_-]{22}/);
+
+  if (idMatch) {
+    channelId = idMatch[0];
+  } else {
+    const handleMatch = input.match(/@([a-zA-Z0-9._-]+)/);
+
+    if (handleMatch) {
+      handle = handleMatch[1];
+    } else if (/^@?[a-zA-Z0-9._-]+$/.test(input)) {
+      handle = input.replace(/^@/, '');
+    } else {
+      throw new Error(
+        'Enter a valid YouTube channel URL, UC channel ID, or @handle.'
+      );
+    }
+  }
+
+  const base = 'https://www.googleapis.com/youtube/v3/';
+
+  async function youtubeRequest(endpoint, params) {
+    const url = new URL(base + endpoint);
+
+    Object.entries({ ...params, key }).forEach(([name, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        url.searchParams.set(name, String(value));
+      }
+    });
+
+    let response;
+    let data;
+
+    try {
+      response = await fetch(url.toString());
+      data = await response.json();
+    } catch (error) {
+      throw new Error(
+        'Could not reach YouTube. Check your internet connection and try again.'
+      );
+    }
+
+    if (!response.ok || data.error) {
+      const reason = data.error?.errors?.[0]?.reason;
+      const message = data.error?.message || 'YouTube API request failed.';
+      throw new Error(reason ? `${message} (${reason})` : message);
+    }
+
+    return data;
+  }
+
+  const channelData = await youtubeRequest('channels', {
+    part: 'id,snippet,contentDetails',
+    ...(channelId ? { id: channelId } : { forHandle: handle })
+  });
+
+  const channel = channelData.items?.[0];
+
+  if (!channel) {
+    throw new Error('Channel not found. Check the URL, handle and API key.');
+  }
+
+  const uploadsPlaylist =
+    channel.contentDetails?.relatedPlaylists?.uploads;
+
+  if (!uploadsPlaylist) {
+    throw new Error('Could not find this channel uploads playlist.');
+  }
+
+  const collected = [];
+  const seenIds = new Set();
+  let pageToken = '';
+
+  // Five pages x 50 items = up to 250 recent uploads.
+  for (let page = 0; page < 5; page++) {
+    const pageData = await youtubeRequest('playlistItems', {
+      part: 'snippet,contentDetails',
+      playlistId: uploadsPlaylist,
+      maxResults: 50,
+      ...(pageToken ? { pageToken } : {})
+    });
+
+    for (const entry of pageData.items || []) {
+      const snippet = entry.snippet || {};
+      const youtubeId =
+        entry.contentDetails?.videoId ||
+        snippet.resourceId?.videoId;
+
+      if (!youtubeId || seenIds.has(youtubeId)) continue;
+      seenIds.add(youtubeId);
+
+      collected.push({
+        title: snippet.title || 'Untitled',
+        channelTitle: channel.snippet?.title || '',
+        channelId: channel.id,
+        youtubeId,
+        youtubeUrl: `https://www.youtube.com/watch?v=${youtubeId}`,
+        thumbnailUrl:
+          snippet.thumbnails?.medium?.url ||
+          snippet.thumbnails?.high?.url ||
+          snippet.thumbnails?.default?.url ||
+          '',
+        description: snippet.description || ''
+      });
+    }
+
+    pageToken = pageData.nextPageToken || '';
+    if (!pageToken) break;
+  }
+
+  const db = await getAndroidDb();
+  let addedCount = 0;
+  let skippedCount = 0;
+
+  for (const item of collected) {
+    const existing = await db.query(
+      'SELECT id FROM videos WHERE youtube_id = ? LIMIT 1',
+      [item.youtubeId]
+    );
+
+    if (existing.values?.length) {
+      skippedCount++;
+      continue;
+    }
+
+    await db.run(`
+      INSERT OR IGNORE INTO videos (
+        title, channel_title, channel_id,
+        youtube_id, youtube_url, file_path,
+        thumbnail_url, description, tags
+      )
+      VALUES (?, ?, ?, ?, ?, '', ?, ?, '')
+    `, [
+      item.title,
+      item.channelTitle,
+      item.channelId,
+      item.youtubeId,
+      item.youtubeUrl,
+      item.thumbnailUrl,
+      item.description
+    ]);
+
+    // The earlier SELECT established that this ID was not present.
+    // Count it once after attempting the insert.
+    addedCount++;
+  }
+
+  return {
+    channelTitle: channel.snippet?.title || '',
+    channelId: channel.id,
+    addedCount,
+    skippedCount,
+    totalFetched: collected.length,
+    videos: await androidListVideos({
+      type: 'youtube',
+      channelId: channel.id
+    })
+  };
+}async function androidOpenPlayer(videoId) {
+  const db = await getAndroidDb();
+
+  const result = await db.query(
+    `SELECT id, title, file_path, youtube_id
+     FROM videos WHERE id = ? LIMIT 1`,
+    [Number(videoId)]
+  );
+
+  const video = result.values?.[0];
+
+  if (!video) {
+    throw new Error('Video not found in your LocalTube library.');
+  }
+
+  if (!video.file_path) {
+    if (video.youtube_id) {
+      return YouTubePlayer.play({
+        videoId: video.youtube_id,
+        title: video.title || 'LocalTube'
+      });
+    }
+    throw new Error('This video does not have a local file.');
+  }
+
+  const id = String(video.id);
+
+  // Recover a checkpoint left by an earlier player session or app interruption.
+  let checkpoint = { positionMs: 0, durationMs: 0 };
+
+  try {
+    checkpoint = await LocalPlayer.getCheckpoint({ videoId: id });
+  } catch (error) {
+    console.warn('Could not recover native playback checkpoint:', error);
+  }
+
+  const resumePositionMs = Math.max(
+    0,
+    Number(checkpoint?.positionMs) || 0
+  );
+
+  const checkpointDurationSeconds =
+    Math.max(0, Number(checkpoint?.durationMs) || 0) / 1000;
+
+  // Synchronize recovered native progress into SQLite.
+  if (resumePositionMs > 0 || checkpointDurationSeconds > 0) {
+    await androidRecordProgress({
+      videoId: video.id,
+      positionSeconds: resumePositionMs / 1000,
+      durationSeconds: checkpointDurationSeconds
+    });
+  }
+
+  const playbackResult = await LocalPlayer.play({
+    path: video.file_path,
+    title: video.title || 'LocalTube',
+    videoId: id,
+    resumePositionMs
+  });
+
+  // Save the final position returned by the native player.
+  if (playbackResult && playbackResult.videoId) {
+    await androidRecordProgress({
+      videoId: video.id,
+      positionSeconds: playbackResult.positionSeconds,
+      durationSeconds: playbackResult.durationSeconds
+    });
+  }
+
+  try {
+    await LocalPlayer.clearCheckpoint({ videoId: id });
+  } catch (error) {
+    console.warn('Could not clear native playback checkpoint:', error);
+  }
+
+  return playbackResult;
+}
+
+function unavailable(feature) {
+  return async () => {
+    throw new Error(`${feature} is not connected yet.`);
+  };
+}
+
+function createAndroidApi() {
+  return {
+    listVideos: androidListVideos,
+    listChannels: androidListChannels,
+    toggleBookmark: androidToggleBookmark,
+    updateTags: androidUpdateTags,
+    loadNotesPath: androidLoadNotesPath,
+    readNotes: androidReadNotes,
+    saveNotes: androidSaveNotes,
+    importFiles: androidImportFiles,
+    fetchChannel: androidFetchChannel,
+    openPlayer: androidOpenPlayer,
+    getVideoUrl: unavailable('Android video playback'),
+    getHistory: androidGetHistory,
+    recordProgress: androidRecordProgress,
+    getRecommendations: androidGetRecommendations,
+    getDataPath: async () => 'LocalTube Android private database'
+  };
+}
+
+export function createPlatformApi() {
+  // Electron must take priority because Capacitor reports "web"
+  // inside the Electron renderer.
+  if (window.localTube) return window.localTube;
+
+  if (Capacitor.getPlatform() === 'android') {
+    return createAndroidApi();
+  }
+
+  return {
+    listVideos: unavailable('Browser database preview'),
+    listChannels: unavailable('Browser database preview'),
+    toggleBookmark: unavailable('Browser database preview'),
+    updateTags: unavailable('Browser database preview'),
+    loadNotesPath: unavailable('Browser database preview'),
+    readNotes: unavailable('Browser database preview'),
+    saveNotes: unavailable('Browser database preview'),
+    importFiles: unavailable('Browser file picker'),
+    fetchChannel: unavailable('Browser channel import'),
+    openPlayer: unavailable('Browser video player'),
+    getVideoUrl: unavailable('Browser video playback'),
+    getHistory: unavailable('Browser database'),
+    recordProgress: unavailable('Browser database'),
+    getRecommendations: unavailable('Browser database'),
+    getDataPath: unavailable('Browser database')
+  };
+}

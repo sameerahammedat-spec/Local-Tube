@@ -1,0 +1,40 @@
+package com.localtube.app;
+
+import android.content.Intent;
+
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.CapacitorPlugin;
+
+@CapacitorPlugin(name = "YouTubePlayer")
+public class YouTubePlayerPlugin extends Plugin {
+
+    @PluginMethod
+    public void play(PluginCall call) {
+        String videoId = call.getString("videoId");
+        String title = call.getString("title", "LocalTube");
+
+        if (videoId == null || !videoId.matches("[a-zA-Z0-9_-]{11}")) {
+            call.reject("Invalid YouTube video ID.");
+            return;
+        }
+
+        Intent intent = new Intent(getContext(), YouTubePlayerActivity.class);
+        intent.putExtra("videoId", videoId);
+        intent.putExtra("title", title);
+
+        try {
+            startActivityForResult(call, intent, "handlePlayerResult");
+        } catch (Exception error) {
+            call.reject("Could not open the YouTube player: " + error.getMessage());
+        }
+    }
+
+    private void handlePlayerResult(
+        PluginCall call,
+        com.getcapacitor.ActivityResult result
+    ) {
+        call.resolve();
+    }
+}

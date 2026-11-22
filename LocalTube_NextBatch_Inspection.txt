@@ -1,0 +1,2967 @@
+﻿========== LOCALTUBE NEXT BATCH INSPECTION ==========
+
+
+==================================================
+FILE: src\main.jsx
+==================================================
+
+import React, { useEffect, useMemo, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import {
+  Bookmark,
+  FolderOpen,
+  Home,
+  NotebookPen,
+  Play,
+  Plus,
+  Search,
+  Settings,
+  ShieldCheck,
+  Youtube,
+  X,
+  Download,
+  Check
+} from 'lucide-react';
+import './style.css';
+
+import { createPlatformApi } from './platform/index.js';
+
+const api = createPlatformApi();
+
+function App() {
+  const [page, setPage] = useState(window.localTube ? 'local' : 'home');
+  const [history, setHistory] = useState([]);
+  const [recommendations, setRecommendations] = useState([]);
+  const [videos, setVideos] = useState([]);
+  const [channels, setChannels] = useState([]);
+  const [activeChannel, setActiveChannel] = useState('');
+  const [selected, setSelected] = useState(null);
+  const [query, setQuery] = useState('');
+  const [bookmarksOnly, setBookmarksOnly] = useState(false);
+
+  const [channelUrl, setChannelUrl] = useState('');
+  const [apiKey, setApiKey] = useState(
+    localStorage.getItem('lt_api_key') || ''
+  );
+  const [channelBusy, setChannelBusy] = useState(false);
+
+  const [notes, setNotes] = useState('');
+  const [notesPath, setNotesPath] = useState('');
+  const [tags, setTags] = useState('');
+  const [message, setMessage] = useState('');
+  const [showSettings, setShowSettings] = useState(false);
+
+  // Open a video in the dedicated LocalTube player window.
+  async function openVideo(video) {
+    if (!video) return;
+
+    try {
+      setSelected(video);
+      setMessage(`Opening "${video.title}"...`);
+
+      console.log('[LocalTube] Opening video:', {
+        id: video.id,
+        title: video.title,
+        isLocal: video.isLocal,
+        youtube_id: video.youtube_id,
+        file_path: video.file_path
+      });
+
+      if (!api?.openPlayer) {
+        throw new Error(
+          'Player service is unavailable. Check electron/preload.cjs.'
+        );
+      }
+
+      const result = await api.openPlayer(video.id);
+
+      console.log('[LocalTube] Player response:', result);
+
+      setMessage(`Player opened: ${video.title}`);
+    } catch (error) {
+      console.error('[LocalTube] Playback failed:', error);
+      setMessage(`Playback failed: ${error.message || error}`);
+    }
+  }
+
+  async function loadLocal() {
+    const rows = await api.listVideos({
+      type: 'local',
+      query,
+      bookmarkedOnly: bookmarksOnly
+    });
+
+    setVideos(rows);
+    return rows;
+  }
+
+  async function loadChannels() {
+    const rows = await api.listChannels();
+    setChannels(rows);
+    return rows;
+  }
+
+  async function loadChannelVideos(channelId = activeChannel) {
+    if (!channelId) {
+      setVideos([]);
+      return [];
+    }
+
+    const rows = await api.listVideos({
+      type: 'youtube',
+      channelId,
+      query,
+      bookmarkedOnly: bookmarksOnly
+    });
+
+    setVideos(rows);
+    return rows;
+  }
+
+  async function refresh() {
+    if (page === 'local' || page === 'home' || page === 'focus') {
+      await loadLocal();
+
+      if (typeof api.getHistory === 'function') {
+        try {
+          setHistory(await api.getHistory(20));
+        } catch (error) {
+          console.warn('[LocalTube] History unavailable:', error);
+        }
+      }
+
+      if (typeof api.getRecommendations === 'function') {
+        try {
+          setRecommendations(await api.getRecommendations(20));
+        } catch (error) {
+          console.warn('[LocalTube] Recommendations unavailable:', error);
+        }
+      }
+    } else if (page === 'channels') {
+      await loadChannels();
+
+      if (activeChannel) {
+        await loadChannelVideos(activeChannel);
+      } else {
+        setVideos([]);
+      }
+    } else if (page === 'bookmarks') {
+      const rows = await api.listVideos({
+        type: 'all',
+        query,
+        bookmarkedOnly: true
+      });
+
+      setVideos(rows);
+    }
+  }
+
+  useEffect(() => {
+    refresh().catch(error => {
+      console.error('[LocalTube] Refresh failed:', error);
+      setMessage(error.message);
+    });
+  }, [page, query, bookmarksOnly, activeChannel]);
+
+  // Load notes and tags whenever the selected video changes.
+  useEffect(() => {
+    let alive = true;
+
+    async function loadSelectedDetails() {
+      if (!selected) {
+        setNotes('');
+        setNotesPath('');
+        setTags('');
+        return;
+      }
+
+      try {
+        const path = await api.loadNotesPath(selected.id);
+        if (!alive) return;
+
+        setNotesPath(path || '');
+
+        const content = path
+          ? await api.readNotes(path)
+          : '';
+
+        if (!alive) return;
+
+        setNotes(content || '');
+        setTags(selected.tags || '');
+      } catch (error) {
+        if (alive) {
+          console.error('[LocalTube] Notes loading failed:', error);
+          setMessage(error.message);
+        }
+      }
+    }
+
+    loadSelectedDetails();
+
+    return () => {
+      alive = false;
+    };
+  }, [selected?.id]);
+
+  async function importLocalFiles() {
+    try {
+      setMessage('Opening video file picker...');
+
+      const result = await api.importFiles();
+
+      if (!result || typeof result.addedCount !== 'number') {
+        throw new Error('Unexpected response from local import service.');
+      }
+
+      setPage('local');
+      setActiveChannel('');
+      setSelected(null);
+
+      const importedVideos = await api.listVideos({
+        type: 'local',
+        query,
+        bookmarkedOnly: bookmarksOnly
+      });
+
+      setVideos(importedVideos);
+
+      setMessage(
+        result.addedCount > 0
+          ? `Successfully imported ${result.addedCount} new video(s).`
+          : 'No new videos imported. The files may already be in your library.'
+      );
+    } catch (error) {
+      console.error('[LocalTube] Local import failed:', error);
+      setMessage(`Import failed: ${error.message || error}`);
+    }
+  }
+
+  async function importChannel(event) {
+    event.preventDefault();
+
+    if (channelBusy) return;
+
+    setChannelBusy(true);
+    setMessage('');
+
+    try {
+      localStorage.setItem('lt_api_key', apiKey);
+
+      const result = await api.fetchChannel({
+        channelUrl,
+        apiKey
+      });
+
+      setActiveChannel(result.channelId);
+      setPage('channels');
+      setSelected(null);
+      setChannelUrl('');
+
+      await loadChannels();
+      await loadChannelVideos(result.channelId);
+
+      setMessage(
+        `${result.addedCount} new videos added from ${result.channelTitle}.`
+      );
+    } catch (error) {
+      console.error('[LocalTube] Channel import failed:', error);
+      setMessage(error.message || 'Channel import failed.');
+    } finally {
+      setChannelBusy(false);
+    }
+  }
+
+  async function selectChannel(channelId) {
+    setActiveChannel(channelId);
+    setSelected(null);
+
+    try {
+      const rows = await api.listVideos({
+        type: 'youtube',
+        channelId,
+        query,
+        bookmarkedOnly: bookmarksOnly
+      });
+
+      setVideos(rows);
+    } catch (error) {
+      console.error('[LocalTube] Channel loading failed:', error);
+      setMessage(error.message);
+    }
+  }
+
+  async function toggleBookmark(video) {
+    try {
+      await api.toggleBookmark(video.id);
+
+      if (selected?.id === video.id) {
+        setSelected(old => ({
+          ...old,
+          bookmarked: !old.bookmarked
+        }));
+      }
+
+      await refresh();
+    } catch (error) {
+      setMessage(`Bookmark failed: ${error.message}`);
+    }
+  }
+
+  async function saveTags() {
+    if (!selected) return;
+
+    try {
+      await api.updateTags({
+        id: selected.id,
+        tags
+      });
+
+      setMessage('Tags saved successfully.');
+      await refresh();
+    } catch (error) {
+      setMessage(`Could not save tags: ${error.message}`);
+    }
+  }
+
+  async function saveNotes() {
+    if (!selected) return;
+
+    try {
+      const result = await api.saveNotes({
+        videoId: selected.id,
+        title: selected.title,
+        content: notes
+      });
+
+      if (!result.canceled) {
+        setNotesPath(result.filePath);
+        setMessage('Notes saved successfully.');
+      }
+    } catch (error) {
+      setMessage(`Could not save notes: ${error.message}`);
+    }
+  }
+
+  function addTimestamp() {
+    // The player is in a separate window, so its current playback
+    // position is not available in this renderer yet.
+    setMessage(
+      'Timestamp capture from the separate player will be connected in a later update.'
+    );
+  }
+
+  const selectedChannel = channels.find(
+    channel => channel.channelId === activeChannel
+  );
+
+  const localCount = useMemo(
+    () => videos.filter(video => video.isLocal).length,
+    [videos]
+  );
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-icon">
+            <Play size={19} fill="currentColor" />
+          </div>
+          <div>
+            <strong>LocalTube</strong>
+            <small>YOUR PERSONAL LIBRARY</small>
+          </div>
+        </div>
+
+        <div className="nav-label">WORKSPACE</div>
+        <button
+          className={`nav-item ${page === 'home' ? 'active' : ''}`}
+          onClick={() => {
+            setPage('home');
+            setActiveChannel('');
+            setSelected(null);
+            setBookmarksOnly(false);
+          }}
+        >
+          <Home size={18} />
+          Home
+        </button>
+
+        <button
+          className={`nav-item ${page === 'local' ? 'active' : ''}`}
+          onClick={() => {
+            setPage('local');
+            setActiveChannel('');
+            setSelected(null);
+            setBookmarksOnly(false);
+          }}
+        >
+          <Home size={18} />
+          Local videos
+        </button>
+
+        <button
+          className={`nav-item ${page === 'channels' ? 'active' : ''}`}
+          onClick={() => {
+            setPage('channels');
+            setSelected(null);
+            setBookmarksOnly(false);
+          }}
+        >
+          <Youtube size={18} />
+          YouTube channels
+          <span>{channels.length}</span>
+        </button>
+
+        <button
+          className={`nav-item ${page === 'bookmarks' ? 'active' : ''}`}
+          onClick={() => {
+            setPage('bookmarks');
+            setSelected(null);
+            setBookmarksOnly(true);
+          }}
+        >
+          <Bookmark size={18} />
+          Bookmarks
+        </button>
+
+        <button
+          className={`nav-item ${page === 'focus' ? 'active' : ''}`}
+          onClick={() => {
+            setPage('focus');
+            setActiveChannel('');
+            setSelected(null);
+            setBookmarksOnly(false);
+          }}
+        >
+          <ShieldCheck size={18} />
+          Focus
+        </button>
+        <div className="sidebar-bottom">
+          <div className="privacy-card">
+            <ShieldCheck size={20} />
+            <strong>Local-first by design</strong>
+            <p>
+              Your local video library and notes stay on this laptop.
+              YouTube catalogue entries are stored separately.
+            </p>
+          </div>
+
+          <button
+            className="nav-item"
+            onClick={() => setShowSettings(true)}
+          >
+            <Settings size={18} />
+            Settings
+          </button>
+        </div>
+      </aside>
+
+      <main className="main-area">
+        <header className="topbar">
+          <div>
+            <div className="eyebrow">PERSONAL VIDEO WORKSPACE</div>
+            <h1>
+              {page === 'home'
+                ? 'Your personal video space'
+                : page === 'focus'
+                  ? 'Focus mode'
+                  : page === 'local'
+                    ? 'Local videos'
+                    : page === 'channels'
+                      ? 'YouTube channels'
+                      : 'Bookmarks'}
+            </h1>
+          </div>
+
+          <div className="top-actions">
+            <div className="searchbox">
+              <Search size={17} />
+
+              <input
+                value={query}
+                onChange={event => setQuery(event.target.value)}
+                placeholder="Search this library..."
+              />
+
+              {query && (
+                <button onClick={() => setQuery('')}>
+                  <X size={15} />
+                </button>
+              )}
+            </div>
+
+            <button
+              className="primary-btn"
+              onClick={importLocalFiles}
+            >
+              <Plus size={17} />
+              Import local files
+            </button>
+          </div>
+        </header>
+
+        {message && (
+          <div className="message" role="status">
+            {message}
+            <button onClick={() => setMessage('')}>
+              <X size={15} />
+            </button>
+          </div>
+        )}
+
+        {page === 'home' && (
+          <section className="library-section mobile-home-page">
+            <div className="mobile-hero">
+              <div className="mobile-hero-copy">
+                <span className="eyebrow">YOUR PERSONAL VIDEO SPACE</span>
+                <h2>Less scrolling.<br />More meaningful watching.</h2>
+                <p>Your own library, available whenever you need it.</p>
+                <button className="primary-btn" onClick={importLocalFiles}>
+                  <Plus size={17} /> Add videos
+                </button>
+              </div>
+            </div>
+
+            <div className="section-head">
+              <div>
+                <h2>Continue watching</h2>
+                <p>Pick up where you left off.</p>
+              </div>
+            </div>
+
+            {history.length > 0 ? (
+              <VideoGrid videos={history} selected={selected}
+                onSelect={setSelected} onPlay={openVideo} />
+            ) : (
+              <p className="mobile-hint">Your recently watched videos will appear here.</p>
+            )}
+
+            <div className="section-head mobile-shelf-heading">
+              <div>
+                <h2>Recommended from your library</h2>
+                <p>Suggestions from content you've already imported.</p>
+              </div>
+            </div>
+
+            {(recommendations.length ? recommendations : videos).length > 0 ? (
+              <VideoGrid
+                videos={(recommendations.length ? recommendations : videos).slice(0, 8)}
+                selected={selected}
+                onSelect={setSelected}
+                onPlay={openVideo}
+              />
+            ) : (
+              <p className="mobile-hint">Import videos to build your collection.</p>
+            )}
+
+            <div className="section-head mobile-shelf-heading">
+              <div>
+                <h2>Recently added</h2>
+                <p>Your latest local videos.</p>
+              </div>
+            </div>
+
+            {videos.length > 0 ? (
+              <VideoGrid videos={videos.slice(0, 8)} selected={selected}
+                onSelect={setSelected} onPlay={openVideo} />
+            ) : (
+              <p className="mobile-hint">No videos have been imported yet.</p>
+            )}
+          </section>
+        )}
+
+        {page === 'focus' && (
+          <section className="library-section focus-page">
+            <div className="focus-banner">
+              <span className="eyebrow">DISTRACTION-REDUCED MODE</span>
+              <h2>Make time for what matters.</h2>
+              <p>Choose a video from your own library. No public feed or Shorts discovery.</p>
+            </div>
+
+            <div className="section-head">
+              <div>
+                <h2>Your focus library</h2>
+                <p>{videos.length} videos in your local catalogue.</p>
+              </div>
+            </div>
+
+            {videos.length > 0 ? (
+              <VideoGrid videos={videos} selected={selected}
+                onSelect={setSelected} onPlay={openVideo} />
+            ) : (
+              <p className="mobile-hint">Import local videos to build your focus library.</p>
+            )}
+
+            {selected && (
+              <div className="focus-selected">
+                <strong>Selected for focus</strong>
+                <span>{selected.title}</span>
+                <button className="primary-btn" onClick={() => openVideo(selected)}>
+                  <Play size={16} fill="currentColor" /> Play again
+                </button>
+              </div>
+            )}
+          </section>
+        )}
+        {page === 'channels' && (
+          <section className="channel-page">
+            <form
+              className="channel-form panel"
+              onSubmit={importChannel}
+            >
+              <h2>Import a YouTube channel</h2>
+
+              <label>Channel URL or @handle</label>
+              <input
+                value={channelUrl}
+                onChange={event => setChannelUrl(event.target.value)}
+                placeholder="https://www.youtube.com/@GoogleDevelopers"
+                required
+              />
+
+              <label>YouTube Data API v3 key</label>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={event => setApiKey(event.target.value)}
+                placeholder="Your API key"
+                required
+              />
+
+              <p className="hint">
+                This imports public video catalogue information, not video
+                files. Up to 250 recent uploads are checked per import.
+              </p>
+
+              <button
+                className="primary-btn"
+                disabled={channelBusy}
+              >
+                <Download size={17} />
+                {channelBusy ? 'Importing channel...' : 'Import channel'}
+              </button>
+            </form>
+
+            <div className="channel-layout">
+              <section className="channel-list panel">
+                <h3>Your channels</h3>
+
+                {channels.length === 0 && (
+                  <p className="hint">No channels imported yet.</p>
+                )}
+
+                {channels.map(channel => (
+                  <button
+                    key={channel.channelId}
+                    className={`channel-row ${
+                      activeChannel === channel.channelId ? 'active' : ''
+                    }`}
+                    onClick={() => selectChannel(channel.channelId)}
+                  >
+                    <Youtube size={18} />
+
+                    <span>
+                      <strong>{channel.channelTitle}</strong>
+                      <small>
+                        {channel.videoCount} catalogue videos
+                      </small>
+                    </span>
+                  </button>
+                ))}
+              </section>
+
+              <section className="channel-videos">
+                <div className="section-head">
+                  <div>
+                    <h2>
+                      {selectedChannel
+                        ? selectedChannel.channelTitle
+                        : 'Select a channel'}
+                    </h2>
+
+                    <p>
+                      {selectedChannel
+                        ? `${videos.length} videos in this channel`
+                        : 'Your imported channel videos will appear here.'}
+                    </p>
+                  </div>
+                </div>
+
+                <VideoGrid
+                  videos={videos}
+                  selected={selected}
+                  onSelect={setSelected}
+                  onPlay={openVideo}
+                />
+              </section>
+            </div>
+          </section>
+        )}
+
+        {page === 'local' && (
+          <section className="library-section">
+            <div className="section-head">
+              <div>
+                <h2>Your local video files</h2>
+                <p>
+                  {videos.length} saved videos Â· {localCount} local files
+                </p>
+              </div>
+            </div>
+
+            {videos.length === 0 ? (
+              <div className="empty-state">
+                <FolderOpen size={32} />
+                <h3>No local videos yet</h3>
+                <p>
+                  Import video files from your computer to build your library.
+                </p>
+
+                <button
+                  className="primary-btn"
+                  onClick={importLocalFiles}
+                >
+                  <Plus size={17} />
+                  Import videos
+                </button>
+              </div>
+            ) : (
+              <VideoGrid
+                videos={videos}
+                selected={selected}
+                onSelect={setSelected}
+                onPlay={openVideo}
+              />
+            )}
+          </section>
+        )}
+
+        {page === 'bookmarks' && (
+          <section className="library-section">
+            <div className="section-head">
+              <div>
+                <h2>Bookmarked videos</h2>
+                <p>Your saved videos from both libraries.</p>
+              </div>
+            </div>
+
+            <VideoGrid
+              videos={videos}
+              selected={selected}
+              onSelect={setSelected}
+              onPlay={openVideo}
+            />
+          </section>
+        )}
+
+        <aside className="detail-panel">
+          {selected ? (
+            <>
+              <div className="player-heading">
+                <div>
+                  <span className="eyebrow">NOW SELECTED</span>
+                  <h2>{selected.title}</h2>
+                  <p>{selected.channel_title}</p>
+                </div>
+
+                <button
+                  className={`icon-btn ${
+                    selected.bookmarked ? 'bookmarked' : ''
+                  }`}
+                  onClick={() => toggleBookmark(selected)}
+                  title="Toggle bookmark"
+                >
+                  <Bookmark
+                    size={19}
+                    fill={
+                      selected.bookmarked ? 'currentColor' : 'none'
+                    }
+                  />
+                </button>
+
+                <button
+                  className="primary-btn compact"
+                  onClick={() => openVideo(selected)}
+                >
+                  <Play size={16} />
+                  Open player
+                </button>
+              </div>
+
+              <div className="player-frame">
+                <div className="catalogue-placeholder">
+                  <Play size={36} />
+
+                  <strong>{selected.title}</strong>
+
+                  <p>
+                    {selected.isLocal
+                      ? 'Local video'
+                      : 'YouTube channel video'}
+                    {' '}Â· Opens in the dedicated LocalTube player.
+                  </p>
+                </div>
+              </div>
+
+              <div className="detail-tabs">
+                <span className="tab-active">
+                  <NotebookPen size={15} />
+                  Notes
+                </span>
+
+                <span className="local-indicator">
+                  Saved on this PC
+                </span>
+              </div>
+
+              <div className="notes-toolbar">
+                <span>VIDEO NOTES</span>
+
+                <button
+                  className="subtle-btn small"
+                  onClick={addTimestamp}
+                >
+                  + Timestamp
+                </button>
+              </div>
+
+              <textarea
+                className="notes-editor"
+                value={notes}
+                onChange={event => setNotes(event.target.value)}
+                placeholder="Write notes and timestamps..."
+              />
+
+              <div className="notes-footer">
+                <span>
+                  {notesPath
+                    ? notesPath.split(/[\\/]/).pop()
+                    : 'Not saved yet'}
+                </span>
+
+                <button
+                  className="primary-btn compact"
+                  onClick={saveNotes}
+                >
+                  <Check size={16} />
+                  Save TXT
+                </button>
+              </div>
+
+              <div className="tag-editor">
+                <label>Tags</label>
+
+                <div>
+                  <input
+                    value={tags}
+                    onChange={event => setTags(event.target.value)}
+                    placeholder="java, learning, revision"
+                  />
+
+                  <button
+                    className="subtle-btn small"
+                    onClick={saveTags}
+                  >
+                    Save tags
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="detail-empty">
+              <div className="empty-icon">
+                <Play size={27} />
+              </div>
+
+              <h3>Select a video</h3>
+
+              <p>
+                Select a local video or a YouTube catalogue entry to play it
+                and write notes.
+              </p>
+            </div>
+          )}
+        </aside>
+
+        <footer className="statusbar">
+          <span>
+            <span className="green-dot" />
+            LOCAL DATABASE CONNECTED
+          </span>
+
+          <span>SQLite Â· Separate local and channel libraries</span>
+        </footer>
+      </main>
+
+      {showSettings && (
+        <div
+          className="modal-backdrop"
+          onClick={() => setShowSettings(false)}
+        >
+          <div
+            className="modal panel"
+            onClick={event => event.stopPropagation()}
+          >
+            <div className="modal-head">
+              <h2>Settings</h2>
+
+              <button
+                className="icon-btn"
+                onClick={() => setShowSettings(false)}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="hint">
+              LocalTube stores your catalogue database in your Windows
+              application data folder. Your original video files are not
+              copied or moved.
+            </p>
+
+            <button
+              className="outline-btn"
+              onClick={async () => {
+                const path = await api.getDataPath();
+                setMessage(`Database folder: ${path}`);
+                setShowSettings(false);
+              }}
+            >
+              Show database folder
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VideoGrid({ videos, selected, onSelect, onPlay }) {
+  if (!videos.length) {
+    return (
+      <div className="empty-state">
+        <p>No videos found in this section.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="video-grid">
+      {videos.map(video => (
+        <button
+          key={video.id}
+          type="button"
+          className={`video-card ${
+            selected?.id === video.id ? 'selected' : ''
+          }`}
+          onClick={() => {
+            onSelect(video);
+            onPlay(video);
+          }}
+          title={`Play ${video.title}`}
+        >
+          <div className="thumb">
+            {video.thumbnail_url ? (
+              <img
+                src={video.thumbnail_url}
+                alt=""
+                loading="lazy"
+              />
+            ) : (
+              <div className="thumb-placeholder">
+                <Play size={27} />
+              </div>
+            )}
+
+            <span
+              className={`source-chip ${
+                video.isLocal ? 'local' : 'online'
+              }`}
+            >
+              {video.isLocal ? 'LOCAL FILE' : 'YOUTUBE'}
+            </span>
+
+            <span className="card-play-icon">
+              <Play size={25} fill="currentColor" />
+            </span>
+          </div>
+
+          <div className="video-card-copy">
+            <strong>{video.title}</strong>
+            <span>{video.channel_title || 'Local videos'}</span>
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+createRoot(document.getElementById('root')).render(<App />);
+
+
+
+==================================================
+FILE: src\App.jsx
+==================================================
+[FILE NOT FOUND]
+
+
+==================================================
+FILE: src\style.css
+==================================================
+
+:root{font-family:'Segoe UI',Arial,sans-serif;color:#e9ebef;background:#101216;font-synthesis:none;text-rendering:optimizeLegibility}*{box-sizing:border-box}body{margin:0;min-width:1000px;min-height:100vh}button,input,textarea{font:inherit}button{cursor:pointer}.app-shell{min-height:100vh;display:flex;background:#101216}.sidebar{width:246px;flex:0 0 246px;border-right:1px solid #272a31;padding:26px 15px 18px;display:flex;flex-direction:column;background:#14161b}.brand{display:flex;gap:11px;align-items:center;padding:0 8px 34px}.brand-icon{width:39px;height:39px;border-radius:12px;display:grid;place-items:center;color:#fff;background:linear-gradient(135deg,#846bff,#5b43d6);box-shadow:0 5px 22px #6954df35}.brand strong{font:800 19px 'Segoe UI',sans-serif;letter-spacing:-.6px;display:block}.brand small{font-size:9px;letter-spacing:1.3px;color:#777d8a;display:block;margin-top:3px}.nav-label,.eyebrow{font-size:10px;letter-spacing:1.5px;font-weight:700;color:#737a88}.nav-label{padding:0 12px 12px}.nav-item{border:0;background:transparent;color:#a8adba;width:100%;display:flex;align-items:center;gap:12px;padding:12px;border-radius:9px;text-align:left;font-size:13px;margin-bottom:4px}.nav-item:hover{background:#202229;color:#fff}.nav-item.active{background:#28243d;color:#c4b9ff}.nav-item span{margin-left:auto;font-size:11px;color:#838897}.sidebar-bottom{margin-top:auto}.privacy-card{background:#1b1e24;border:1px solid #2b2e36;border-radius:12px;padding:14px;margin:12px 2px 17px;color:#9b91f6}.privacy-card strong{display:block;color:#dfe1e8;font-size:12px;margin:9px 0 5px}.privacy-card p{font-size:11px;line-height:1.6;color:#858b99;margin:0}.sidebar-foot{padding:13px 8px 0;border-top:1px solid #292c33;font-size:10px;color:#828896;display:flex;align-items:center;gap:8px}.green-dot{width:7px;height:7px;display:inline-block;background:#55d6a0;border-radius:50%;box-shadow:0 0 9px #55d6a055}.main-area{min-width:0;flex:1;display:flex;flex-direction:column}.topbar{min-height:104px;border-bottom:1px solid #272a31;padding:22px 28px;display:flex;align-items:center;justify-content:space-between;gap:20px}.topbar h1{font:700 25px 'Segoe UI',sans-serif;margin:6px 0 0;letter-spacing:-.8px}.top-actions{display:flex;gap:11px;align-items:center}.searchbox{display:flex;align-items:center;gap:9px;border:1px solid #30333c;background:#191b21;padding:0 12px;height:41px;width:280px;border-radius:9px;color:#777e8b}.searchbox input{background:transparent;border:0;outline:0;color:#eceef3;width:100%;font-size:12px}.searchbox button,.message button{background:none;border:0;color:#9298a5;display:flex}.primary-btn,.outline-btn,.subtle-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:8px;padding:10px 13px;font-size:12px;font-weight:600;white-space:nowrap}.primary-btn{border:1px solid #8067f7;background:#7458ed;color:white;box-shadow:0 4px 15px #6f56e51e}.primary-btn:hover{background:#846df5}.primary-btn:disabled{opacity:.6;cursor:wait}.outline-btn{border:1px solid #49425f;background:#242033;color:#d4caff}.subtle-btn{border:1px solid #30333c;background:#1b1d23;color:#aeb3bf}.subtle-btn:hover,.outline-btn:hover{border-color:#7162c3}.subtle-btn.small{font-size:10px;padding:6px 8px}.message{margin:13px 27px 0;background:#222d2b;border:1px solid #315447;color:#b4f0d2;border-radius:8px;padding:10px 13px;font-size:12px;display:flex;justify-content:space-between;gap:12px}.content-grid{display:grid;grid-template-columns:minmax(340px,1fr) minmax(370px,44%);flex:1;min-height:0}.library-section{padding:25px 25px 30px;min-width:0}.section-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;gap:10px}.section-head h2,.player-heading h2{font:700 15px 'Segoe UI',sans-serif;margin:0 0 5px}.section-head p,.player-heading p{margin:0;font-size:11px;color:#818795}.video-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:17px 14px}.video-card{padding:0;background:transparent;border:1px solid transparent;border-radius:10px;overflow:hidden;text-align:left;color:inherit;min-width:0}.video-card:hover,.video-card.selected{background:#1c1e25;border-color:#383345}.thumb{height:116px;position:relative;background:#20232b;overflow:hidden}.thumb img{width:100%;height:100%;object-fit:cover}.thumb-placeholder{width:100%;height:100%;display:grid;place-items:center;color:#7668c5;background:linear-gradient(135deg,#242331,#1b2029)}.source-chip{position:absolute;left:8px;bottom:8px;font-size:8px;font-weight:700;letter-spacing:.6px;padding:5px 6px;border-radius:4px}.source-chip.local{background:#1b493b;color:#8ae3bd}.source-chip.online{background:#38313e;color:#c7b4ff}.bookmark-chip{position:absolute;right:8px;top:8px;background:#17151edc;color:#d5c8ff;padding:6px;border-radius:6px}.video-card-copy{padding:10px 9px 12px;display:flex;flex-direction:column;gap:6px}.video-card-copy strong{font-size:12px;line-height:1.45;font-weight:600;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.video-card-copy span{font-size:10px;color:#858b99;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.detail-panel{border-left:1px solid #272a31;padding:22px 21px 20px;display:flex;flex-direction:column;min-width:0;background:#13151a}.player-heading{display:flex;justify-content:space-between;gap:12px;margin-bottom:15px}.player-heading h2{line-height:1.4;margin-top:6px}.icon-btn{width:36px;height:36px;border-radius:9px;background:#202229;border:1px solid #333640;color:#b0b5c2;display:grid;place-items:center;flex-shrink:0}.icon-btn.bookmarked{color:#c6b7ff;border-color:#5b4a9a}.player-frame{width:100%;aspect-ratio:16/9;background:#090a0d;border:1px solid #292b33;border-radius:10px;overflow:hidden;display:grid;place-items:center}.player-frame video{width:100%;height:100%;object-fit:contain;background:#000}.catalogue-placeholder{padding:20px;display:flex;flex-direction:column;align-items:center;gap:9px;text-align:center;color:#9b8cf7}.catalogue-placeholder strong{color:#e4e5eb;font-size:13px}.catalogue-placeholder p{font-size:11px;line-height:1.6;color:#898f9d;max-width:290px;margin:0 0 5px}.text-btn{border:0;background:transparent;color:#b3a8ff;font-size:11px;display:flex;gap:5px;align-items:center;margin-top:2px}.detail-tabs{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #2a2d35;margin-top:20px;padding-bottom:11px}.tab-active{display:flex;align-items:center;gap:7px;color:#c6b9ff;font-size:12px;font-weight:600}.local-indicator{font-size:9px;color:#8e95a2;display:flex;gap:6px;align-items:center}.local-indicator .green-dot{width:5px;height:5px}.notes-toolbar{display:flex;justify-content:space-between;align-items:center;margin:12px 0 8px}.notes-toolbar>span,.tag-editor label{font-size:9px;letter-spacing:1px;font-weight:700;color:#818795}.notes-editor{width:100%;flex:1;min-height:120px;resize:vertical;background:#191b21;border:1px solid #30333c;border-radius:8px;color:#dfe1e8;outline:none;padding:12px;font-size:12px;line-height:1.7}.notes-editor:focus,.searchbox:focus-within{border-color:#6d5cc0}.notes-editor::placeholder{color:#656b79}.notes-footer{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0 13px}.notes-footer>span{font-size:9px;color:#777e8c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.primary-btn.compact{padding:8px 10px;font-size:10px}.tag-editor{border-top:1px solid #292c34;padding-top:12px}.tag-editor>div{display:flex;gap:8px;margin-top:7px}.tag-editor input,.channel-form input{width:100%;min-width:0;background:#191b21;border:1px solid #30333c;border-radius:8px;color:#e8eaf0;padding:10px 11px;outline:0;font-size:11px}.empty-state,.detail-empty{min-height:350px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:35px}.empty-icon{width:58px;height:58px;border:1px solid #3b3557;background:#242033;color:#b7a8ff;border-radius:17px;display:grid;place-items:center;margin-bottom:17px}.empty-state h3,.detail-empty h3{font:700 15px 'Segoe UI',sans-serif;margin:0 0 7px}.empty-state p,.detail-empty p{font-size:12px;line-height:1.7;color:#858b99;max-width:320px;margin:0 0 17px}.detail-empty{flex:1}.statusbar{height:34px;border-top:1px solid #272a31;display:flex;align-items:center;justify-content:space-between;padding:0 25px;color:#6f7683;font-size:9px;letter-spacing:.3px}.statusbar>span:first-child{display:flex;gap:7px;align-items:center}.channel-page{padding:28px;max-width:900px;width:100%;margin:0 auto}.feature-banner{display:flex;gap:17px;align-items:center;padding:21px;border:1px solid #39334e;background:linear-gradient(115deg,#242033,#1a1c23);border-radius:13px;margin-bottom:20px}.banner-icon{width:52px;height:52px;display:grid;place-items:center;border-radius:13px;background:#3c315f;color:#d2c6ff;flex-shrink:0}.feature-banner h2{font:700 17px 'Segoe UI',sans-serif;margin:0 0 7px}.feature-banner p,.info-panel p{font-size:12px;line-height:1.6;color:#959baa;margin:0}.panel{background:#181a20;border:1px solid #2d3038;border-radius:12px}.channel-form{padding:22px;display:flex;flex-direction:column;gap:9px}.channel-form label{font-size:11px;color:#b9bdc7;font-weight:600;margin-top:5px}.channel-form input{font-size:12px;padding:12px}.hint{font-size:10px;line-height:1.7;color:#7f8694;margin:2px 0 10px}.channel-form .primary-btn{align-self:flex-start}.info-panel{margin-top:17px;padding:17px;display:flex;gap:13px;color:#b3a4ff}.info-panel strong{font-size:12px;color:#e1e3e9;display:block;margin-bottom:5px}.modal-backdrop{position:fixed;inset:0;background:#050608bb;display:grid;place-items:center;z-index:5;padding:25px}.modal{width:min(560px,100%);padding:22px}.modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.modal-head h2{font:700 18px 'Segoe UI';margin:0}.setting-row{display:flex;gap:13px;padding:15px 0;border-bottom:1px solid #2b2e35;color:#a99bff}.setting-row strong{font-size:12px;color:#e2e4eb}.setting-row p{font-size:11px;line-height:1.7;color:#858c99;margin:5px 0 0}.modal>.outline-btn{margin-top:17px}@media(max-width:1200px){.sidebar{width:210px;flex-basis:210px}.content-grid{grid-template-columns:minmax(310px,1fr) minmax(350px,45%)}.topbar{padding:20px}.library-section{padding:20px}.detail-panel{padding:19px}.searchbox{width:225px}.thumb{height:100px}}
+
+/* LocalTube updated library layout */
+.main-area {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 43%);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+.main-area > .topbar,
+.main-area > .message,
+.main-area > .statusbar {
+  grid-column: 1 / -1;
+}
+
+.main-area > .library-section,
+.main-area > .channel-page {
+  grid-column: 1;
+  grid-row: 3;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.main-area > .detail-panel {
+  grid-column: 2;
+  grid-row: 3;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.main-area > .statusbar {
+  grid-row: 4;
+}
+
+.channel-page {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 22px;
+}
+
+.channel-form {
+  margin-bottom: 18px;
+}
+
+.channel-form h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.channel-layout {
+  display: grid;
+  grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.channel-list {
+  padding: 15px;
+}
+
+.channel-list h3 {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.channel-row {
+  display: flex;
+  width: 100%;
+  gap: 10px;
+  align-items: center;
+  padding: 11px;
+  margin-bottom: 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #c7c9d2;
+  background: transparent;
+  text-align: left;
+}
+
+.channel-row:hover,
+.channel-row.active {
+  background: #28243d;
+  border-color: #49406e;
+}
+
+.channel-row > span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.channel-row strong {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.channel-row small {
+  color: #8b91a0;
+  font-size: 9px;
+}
+
+.channel-videos {
+  min-width: 0;
+}
+
+.channel-videos .section-head {
+  margin-bottom: 15px;
+}
+
+.channel-videos .video-grid {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+
+.player-frame iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 200px;
+  border: 0;
+  background: #000;
+}
+
+.player-frame video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}
+
+@media (max-width: 1150px) {
+  .main-area {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 42%);
+  }
+
+  .channel-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* LocalTube video-card playback interaction */
+
+.video-card {
+  cursor: pointer;
+  text-align: left;
+}
+
+.video-card .thumb {
+  position: relative;
+  overflow: hidden;
+}
+
+.video-card .thumb img {
+  transition: transform 0.25s ease;
+}
+
+.video-card:hover .thumb img {
+  transform: scale(1.045);
+}
+
+.card-play-icon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  background: rgba(0, 0, 0, 0.38);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.video-card:hover .card-play-icon {
+  opacity: 1;
+}
+
+.card-play-icon svg {
+  width: 52px;
+  height: 52px;
+  padding: 12px;
+  border-radius: 50%;
+  background: rgba(124, 92, 230, 0.95);
+}
+
+.video-card.selected {
+  outline: 2px solid #8b72ef;
+  outline-offset: 2px;
+}
+
+.player-heading .primary-btn {
+  flex-shrink: 0;
+}
+
+/* =========================================================
+   LocalTube â€” Mobile responsive foundation
+   Desktop styles above remain unchanged.
+   ========================================================= */
+
+@media (max-width: 700px) {
+  :root {
+    color-scheme: dark;
+  }
+
+  html, body, #root {
+    width: 100%;
+    min-width: 0;
+    min-height: 100%;
+    margin: 0;
+    overflow-x: hidden;
+  }
+
+  body {
+    min-width: 0;
+    min-height: 100dvh;
+    font-size: 14px;
+  }
+
+  .app-shell {
+    display: flex;
+    flex-direction: column;
+    min-height: 100dvh;
+    padding-bottom: calc(72px + env(safe-area-inset-bottom));
+  }
+
+  .sidebar {
+    position: fixed;
+    z-index: 20;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: calc(66px + env(safe-area-inset-bottom));
+    min-height: 66px;
+    padding: 7px 8px env(safe-area-inset-bottom);
+    flex: none;
+    flex-direction: row;
+    justify-content: space-around;
+    align-items: center;
+    gap: 4px;
+    background: rgba(19, 20, 28, .96);
+    border-right: 0;
+    border-top: 1px solid #30303d;
+    backdrop-filter: blur(18px);
+  }
+
+  .brand,
+  .nav-label,
+  .sidebar-bottom,
+  .sidebar-foot {
+    display: none !important;
+  }
+
+  .sidebar > .nav-item {
+    flex: 1;
+    width: auto;
+    min-width: 0;
+    min-height: 49px;
+    margin: 0;
+    padding: 7px 3px;
+    border-radius: 11px;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 4px;
+    text-align: center;
+    font-size: 10px;
+  }
+
+  .sidebar > .nav-item span {
+    margin: 0;
+    font-size: 10px;
+  }
+
+  .main-area {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: visible;
+  }
+
+  .topbar {
+    min-height: 78px;
+    padding: 15px 16px;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .topbar h1 {
+    font-size: 21px;
+    margin-top: 4px;
+  }
+
+  .eyebrow {
+    font-size: 9px;
+  }
+
+  .top-actions {
+    gap: 7px;
+  }
+
+  .searchbox {
+    width: min(42vw, 180px);
+    height: 38px;
+    padding: 0 9px;
+  }
+
+  .searchbox input {
+    font-size: 11px;
+  }
+
+  .primary-btn,
+  .outline-btn,
+  .subtle-btn {
+    padding: 9px 10px;
+    font-size: 11px;
+  }
+
+  .content-grid {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1;
+  }
+
+  .library-section {
+    width: 100%;
+    padding: 19px 15px 22px;
+    overflow: visible;
+  }
+
+  .section-head {
+    margin-bottom: 14px;
+  }
+
+  .section-head h2 {
+    font-size: 15px;
+  }
+
+  .video-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 13px 10px;
+  }
+
+  .video-card {
+    width: 100%;
+    border-radius: 11px;
+  }
+
+  .thumb {
+    height: auto;
+    aspect-ratio: 16 / 10;
+    border-radius: 9px;
+  }
+
+  .video-card-copy {
+    padding: 8px 5px 10px;
+    gap: 5px;
+  }
+
+  .video-card-copy strong {
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
+  .video-card-copy span {
+    font-size: 10px;
+  }
+
+  .detail-panel {
+    width: 100%;
+    min-width: 0;
+    min-height: 440px;
+    padding: 19px 15px;
+    border-left: 0;
+    border-top: 1px solid #292c35;
+  }
+
+  .player-frame {
+    border-radius: 12px;
+  }
+
+  .player-frame iframe,
+  .player-frame video {
+    min-height: 190px;
+  }
+
+  .notes-editor {
+    min-height: 130px;
+  }
+
+  .channel-page {
+    padding: 17px 15px 24px;
+  }
+
+  .channel-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .channel-videos .video-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .feature-banner {
+    padding: 15px;
+    gap: 12px;
+  }
+
+  .feature-banner h2 {
+    font-size: 15px;
+  }
+
+  .message {
+    margin: 10px 12px 0;
+    font-size: 11px;
+  }
+
+  .statusbar {
+    min-height: 30px;
+    padding: 0 13px;
+    font-size: 8px;
+  }
+
+  .empty-state,
+  .detail-empty {
+    min-height: 260px;
+    padding: 25px 15px;
+  }
+
+  .modal-backdrop {
+    padding: 12px;
+  }
+
+  .modal {
+    max-height: 85dvh;
+    overflow-y: auto;
+    padding: 18px;
+  }
+}
+
+@media (min-width: 701px) and (max-width: 1000px) {
+  body {
+    min-width: 0;
+  }
+
+  .sidebar {
+    width: 190px;
+    flex-basis: 190px;
+  }
+
+  .main-area {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 40%);
+  }
+
+  .content-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .detail-panel {
+    border-left: 0;
+    border-top: 1px solid #272a31;
+  }
+}
+
+
+
+==================================================
+FILE: src\App.css
+==================================================
+[FILE NOT FOUND]
+
+
+==================================================
+FILE: src\index.css
+==================================================
+[FILE NOT FOUND]
+
+
+==================================================
+FILE: src\platform\index.js
+==================================================
+import { registerPlugin, Capacitor } from '@capacitor/core';
+import { FilePicker } from '@capawesome/capacitor-file-picker';
+import { CapacitorSQLite, SQLiteConnection } from '@capacitor-community/sqlite';
+
+const LocalMedia = registerPlugin('LocalMedia');
+const LocalPlayer = registerPlugin('LocalPlayer');
+const YouTubePlayer = registerPlugin('YouTubePlayer');
+
+let androidDbPromise;
+
+async function getAndroidDb() {
+  if (!androidDbPromise) {
+    androidDbPromise = (async () => {
+      const sqlite = new SQLiteConnection(CapacitorSQLite);
+      const consistency = await sqlite.checkConnectionsConsistency();
+      const connection = await sqlite.isConnection('localtube', false);
+
+      let db;
+
+      if (consistency.result && connection.result) {
+        db = await sqlite.retrieveConnection('localtube', false);
+      } else {
+        db = await sqlite.createConnection(
+          'localtube', false, 'no-encryption', 1, false
+        );
+      }
+
+      await db.open();
+
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS videos (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          channel_title TEXT DEFAULT '',
+          channel_id TEXT DEFAULT '',
+          youtube_id TEXT DEFAULT '',
+          youtube_url TEXT DEFAULT '',
+          file_path TEXT DEFAULT '',
+          thumbnail_url TEXT DEFAULT '',
+          description TEXT DEFAULT '',
+          tags TEXT DEFAULT '',
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS videos_unique_local_path
+        ON videos(file_path) WHERE file_path <> '';
+
+        CREATE UNIQUE INDEX IF NOT EXISTS videos_unique_youtube_id
+        ON videos(youtube_id) WHERE youtube_id <> '';
+
+        CREATE TABLE IF NOT EXISTS bookmarks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          video_id INTEGER NOT NULL UNIQUE,
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(video_id) REFERENCES videos(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS video_notes (
+          video_id INTEGER PRIMARY KEY,
+          content TEXT NOT NULL DEFAULT '',
+          updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(video_id) REFERENCES videos(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS watch_history (
+          video_id INTEGER PRIMARY KEY,
+          position_seconds REAL NOT NULL DEFAULT 0,
+          duration_seconds REAL NOT NULL DEFAULT 0,
+          completed INTEGER NOT NULL DEFAULT 0,
+          last_watched_at TEXT DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY(video_id) REFERENCES videos(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS watch_history_recent
+        ON watch_history(last_watched_at DESC);
+      `);
+
+      return db;
+    })().catch(error => {
+      androidDbPromise = null;
+      throw error;
+    });
+  }
+
+  return androidDbPromise;
+}
+
+function mapVideo(row) {
+  return {
+    ...row,
+    isLocal: Boolean(row.file_path),
+    bookmarked: Boolean(row.bookmarked),
+    fileExists: Boolean(row.file_path),
+    progressSeconds: Number(row.position_seconds || 0),
+    durationSeconds: Number(row.duration_seconds || 0),
+    completed: Boolean(row.completed)
+  };
+}
+
+async function androidListVideos(options = {}) {
+  const db = await getAndroidDb();
+  const {
+    type = 'all',
+    channelId = '',
+    query = '',
+    bookmarkedOnly = false
+  } = options || {};
+
+  let sql = `
+    SELECT v.*,
+      EXISTS (
+        SELECT 1 FROM bookmarks b WHERE b.video_id = v.id
+      ) AS bookmarked,
+      COALESCE(h.position_seconds, 0) AS position_seconds,
+      COALESCE(h.duration_seconds, 0) AS duration_seconds,
+      COALESCE(h.completed, 0) AS completed
+    FROM videos v
+    LEFT JOIN watch_history h ON h.video_id = v.id
+    WHERE 1 = 1
+  `;
+
+  const values = [];
+
+  if (type === 'local') {
+    sql += " AND v.file_path <> ''";
+  } else if (type === 'youtube') {
+    sql += " AND v.youtube_id <> '' AND v.file_path = ''";
+  }
+
+  if (channelId) {
+    sql += ' AND v.channel_id = ?';
+    values.push(String(channelId));
+  }
+
+  if (bookmarkedOnly) {
+    sql += `
+      AND EXISTS (
+        SELECT 1 FROM bookmarks b WHERE b.video_id = v.id
+      )
+    `;
+  }
+
+  if (query && String(query).trim()) {
+    sql += `
+      AND (
+        v.title LIKE ? OR
+        v.channel_title LIKE ? OR
+        v.tags LIKE ? OR
+        v.description LIKE ?
+      )
+    `;
+    const term = `%${String(query).trim()}%`;
+    values.push(term, term, term, term);
+  }
+
+  sql += ' ORDER BY v.created_at DESC, v.id DESC LIMIT 1000';
+
+  const result = await db.query(sql, values);
+  return (result.values || []).map(mapVideo);
+}
+
+async function androidListChannels() {
+  const db = await getAndroidDb();
+
+  const result = await db.query(`
+    SELECT channel_id AS channelId,
+      channel_title AS channelTitle,
+      COUNT(*) AS videoCount,
+      MAX(created_at) AS importedAt
+    FROM videos
+    WHERE youtube_id <> ''
+      AND file_path = ''
+      AND channel_id <> ''
+    GROUP BY channel_id, channel_title
+    ORDER BY channel_title COLLATE NOCASE
+  `);
+
+  return result.values || [];
+}
+
+async function androidToggleBookmark(id) {
+  const db = await getAndroidDb();
+
+  const existing = await db.query(
+    'SELECT id FROM bookmarks WHERE video_id = ?',
+    [Number(id)]
+  );
+
+  if (existing.values?.length) {
+    await db.run('DELETE FROM bookmarks WHERE video_id = ?', [Number(id)]);
+  } else {
+    await db.run(
+      'INSERT OR IGNORE INTO bookmarks(video_id) VALUES(?)',
+      [Number(id)]
+    );
+  }
+
+  return androidListVideos();
+}
+
+async function androidUpdateTags({ id, tags }) {
+  const db = await getAndroidDb();
+
+  await db.run(
+    'UPDATE videos SET tags = ? WHERE id = ?',
+    [String(tags || '').slice(0, 1000), Number(id)]
+  );
+
+  return androidListVideos();
+}
+
+async function androidLoadNotesPath(videoId) {
+  return `localtube-note://${Number(videoId)}`;
+}
+
+async function androidReadNotes(notePath) {
+  const match = String(notePath).match(/^localtube-note:\/\/(\d+)$/);
+  if (!match) return '';
+
+  const db = await getAndroidDb();
+  const result = await db.query(
+    'SELECT content FROM video_notes WHERE video_id = ?',
+    [Number(match[1])]
+  );
+
+  return result.values?.[0]?.content || '';
+}
+
+async function androidSaveNotes({ videoId, content }) {
+  const db = await getAndroidDb();
+
+  await db.run(`
+    INSERT INTO video_notes(video_id, content, updated_at)
+    VALUES(?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(video_id)
+    DO UPDATE SET
+      content = excluded.content,
+      updated_at = CURRENT_TIMESTAMP
+  `, [Number(videoId), String(content || '')]);
+
+  return {
+    canceled: false,
+    filePath: `localtube-note://${Number(videoId)}`
+  };
+}
+
+async function androidRecordProgress({
+  videoId,
+  positionSeconds = 0,
+  durationSeconds = 0
+}) {
+  const db = await getAndroidDb();
+  const position = Math.max(0, Number(positionSeconds) || 0);
+  const duration = Math.max(0, Number(durationSeconds) || 0);
+  const completed = duration > 0 && position / duration >= 0.9 ? 1 : 0;
+
+  await db.run(`
+    INSERT INTO watch_history (
+      video_id, position_seconds, duration_seconds,
+      completed, last_watched_at
+    )
+    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(video_id)
+    DO UPDATE SET
+      position_seconds = excluded.position_seconds,
+      duration_seconds = excluded.duration_seconds,
+      completed = excluded.completed,
+      last_watched_at = CURRENT_TIMESTAMP
+  `, [Number(videoId), position, duration, completed]);
+
+  return { success: true, completed: Boolean(completed) };
+}
+
+async function androidGetHistory(limit = 30) {
+  const db = await getAndroidDb();
+
+  const result = await db.query(`
+    SELECT v.*,
+      COALESCE(h.position_seconds, 0) AS position_seconds,
+      COALESCE(h.duration_seconds, 0) AS duration_seconds,
+      COALESCE(h.completed, 0) AS completed,
+      h.last_watched_at,
+      EXISTS (
+        SELECT 1 FROM bookmarks b WHERE b.video_id = v.id
+      ) AS bookmarked
+    FROM watch_history h
+    INNER JOIN videos v ON v.id = h.video_id
+    ORDER BY h.last_watched_at DESC
+    LIMIT ?
+  `, [Math.max(1, Math.min(100, Number(limit) || 30))]);
+
+  return (result.values || []).map(mapVideo);
+}
+
+async function androidGetRecommendations(limit = 20) {
+  const db = await getAndroidDb();
+
+  const result = await db.query(`
+    SELECT v.*,
+      EXISTS (
+        SELECT 1 FROM bookmarks b WHERE b.video_id = v.id
+      ) AS bookmarked,
+      COALESCE(h.position_seconds, 0) AS position_seconds,
+      COALESCE(h.duration_seconds, 0) AS duration_seconds,
+      COALESCE(h.completed, 0) AS completed
+    FROM videos v
+    LEFT JOIN watch_history h ON h.video_id = v.id
+    WHERE v.id NOT IN (
+      SELECT video_id FROM watch_history
+      WHERE completed = 1
+    )
+    ORDER BY
+      CASE WHEN EXISTS (
+        SELECT 1 FROM bookmarks b WHERE b.video_id = v.id
+      ) THEN 0 ELSE 1 END,
+      CASE WHEN h.video_id IS NULL THEN 0 ELSE 1 END,
+      v.created_at DESC
+    LIMIT ?
+  `, [Math.max(1, Math.min(100, Number(limit) || 20))]);
+
+  return (result.values || []).map(mapVideo);
+}
+
+async function androidImportFiles() {
+  const db = await getAndroidDb();
+  const pickerResult = await FilePicker.pickVideos({ limit: 0 });
+  const files = pickerResult?.files || [];
+
+  if (!files.length) return { addedCount: 0, errors: [] };
+
+  let addedCount = 0;
+  const errors = [];
+
+  for (const file of files) {
+    try {
+      if (!file.path) {
+        throw new Error(`No accessible URI for ${file.name || 'video'}`);
+      }
+
+      const originalName = file.name || 'video';
+      const title = originalName.replace(/\.[^/.]+$/, '') || 'Untitled video';
+
+      const copied = await LocalMedia.copyVideo({
+        uri: file.path,
+        fileName: originalName
+      });
+
+      if (!copied?.path) {
+        throw new Error('Android did not return the copied video path.');
+      }
+
+      await db.run(`
+        INSERT INTO videos (
+          title, channel_title, channel_id, youtube_id,
+          youtube_url, file_path, thumbnail_url, description, tags
+        ) VALUES (?, '', '', '', '', ?, '', '', '')
+      `, [title, copied.path]);
+
+      addedCount++;
+    } catch (error) {
+      console.error('[LocalTube] Import failed:', file.name, error);
+      errors.push(`${file.name || 'Video'}: ${error.message || error}`);
+    }
+  }
+
+  return { addedCount, errors };
+}
+
+
+// Android YouTube Data API v3 channel importer.
+async function androidFetchChannel({ channelUrl, apiKey }) {
+  const key = String(apiKey || '').trim();
+  const input = String(channelUrl || '').trim();
+
+  if (!key) throw new Error('Enter your YouTube Data API key.');
+  if (!input) throw new Error('Enter a YouTube channel URL or handle.');
+
+  let channelId = '';
+  let handle = '';
+
+  const idMatch = input.match(/UC[a-zA-Z0-9_-]{22}/);
+
+  if (idMatch) {
+    channelId = idMatch[0];
+  } else {
+    const handleMatch = input.match(/@([a-zA-Z0-9._-]+)/);
+
+    if (handleMatch) {
+      handle = handleMatch[1];
+    } else if (/^@?[a-zA-Z0-9._-]+$/.test(input)) {
+      handle = input.replace(/^@/, '');
+    } else {
+      throw new Error(
+        'Enter a valid YouTube channel URL, UC channel ID, or @handle.'
+      );
+    }
+  }
+
+  const base = 'https://www.googleapis.com/youtube/v3/';
+
+  async function youtubeRequest(endpoint, params) {
+    const url = new URL(base + endpoint);
+
+    Object.entries({ ...params, key }).forEach(([name, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        url.searchParams.set(name, String(value));
+      }
+    });
+
+    let response;
+    let data;
+
+    try {
+      response = await fetch(url.toString());
+      data = await response.json();
+    } catch (error) {
+      throw new Error(
+        'Could not reach YouTube. Check your internet connection and try again.'
+      );
+    }
+
+    if (!response.ok || data.error) {
+      const reason = data.error?.errors?.[0]?.reason;
+      const message = data.error?.message || 'YouTube API request failed.';
+      throw new Error(reason ? `${message} (${reason})` : message);
+    }
+
+    return data;
+  }
+
+  const channelData = await youtubeRequest('channels', {
+    part: 'id,snippet,contentDetails',
+    ...(channelId ? { id: channelId } : { forHandle: handle })
+  });
+
+  const channel = channelData.items?.[0];
+
+  if (!channel) {
+    throw new Error('Channel not found. Check the URL, handle and API key.');
+  }
+
+  const uploadsPlaylist =
+    channel.contentDetails?.relatedPlaylists?.uploads;
+
+  if (!uploadsPlaylist) {
+    throw new Error('Could not find this channel uploads playlist.');
+  }
+
+  const collected = [];
+  const seenIds = new Set();
+  let pageToken = '';
+
+  // Five pages x 50 items = up to 250 recent uploads.
+  for (let page = 0; page < 5; page++) {
+    const pageData = await youtubeRequest('playlistItems', {
+      part: 'snippet,contentDetails',
+      playlistId: uploadsPlaylist,
+      maxResults: 50,
+      ...(pageToken ? { pageToken } : {})
+    });
+
+    for (const entry of pageData.items || []) {
+      const snippet = entry.snippet || {};
+      const youtubeId =
+        entry.contentDetails?.videoId ||
+        snippet.resourceId?.videoId;
+
+      if (!youtubeId || seenIds.has(youtubeId)) continue;
+      seenIds.add(youtubeId);
+
+      collected.push({
+        title: snippet.title || 'Untitled',
+        channelTitle: channel.snippet?.title || '',
+        channelId: channel.id,
+        youtubeId,
+        youtubeUrl: `https://www.youtube.com/watch?v=${youtubeId}`,
+        thumbnailUrl:
+          snippet.thumbnails?.medium?.url ||
+          snippet.thumbnails?.high?.url ||
+          snippet.thumbnails?.default?.url ||
+          '',
+        description: snippet.description || ''
+      });
+    }
+
+    pageToken = pageData.nextPageToken || '';
+    if (!pageToken) break;
+  }
+
+  const db = await getAndroidDb();
+  let addedCount = 0;
+  let skippedCount = 0;
+
+  for (const item of collected) {
+    const existing = await db.query(
+      'SELECT id FROM videos WHERE youtube_id = ? LIMIT 1',
+      [item.youtubeId]
+    );
+
+    if (existing.values?.length) {
+      skippedCount++;
+      continue;
+    }
+
+    await db.run(`
+      INSERT OR IGNORE INTO videos (
+        title, channel_title, channel_id,
+        youtube_id, youtube_url, file_path,
+        thumbnail_url, description, tags
+      )
+      VALUES (?, ?, ?, ?, ?, '', ?, ?, '')
+    `, [
+      item.title,
+      item.channelTitle,
+      item.channelId,
+      item.youtubeId,
+      item.youtubeUrl,
+      item.thumbnailUrl,
+      item.description
+    ]);
+
+    // Verify that the insert actually happened. This also handles a
+    // duplicate inserted by another operation between SELECT and INSERT.
+    const inserted = await db.query(
+      'SELECT id FROM videos WHERE youtube_id = ? LIMIT 1',
+      [item.youtubeId]
+    );
+
+    if (inserted.values?.length) {
+      // Count only IDs that were absent before this import.
+      addedCount++;
+    }
+  }
+
+  return {
+    channelTitle: channel.snippet?.title || '',
+    channelId: channel.id,
+    addedCount,
+    skippedCount,
+    totalFetched: collected.length,
+    videos: await androidListVideos({
+      type: 'youtube',
+      channelId: channel.id
+    })
+  };
+}async function androidOpenPlayer(videoId) {
+  const db = await getAndroidDb();
+
+  const result = await db.query(
+    `SELECT id, title, file_path, youtube_id
+     FROM videos WHERE id = ? LIMIT 1`,
+    [Number(videoId)]
+  );
+
+  const video = result.values?.[0];
+
+  if (!video) {
+    throw new Error('Video not found in your LocalTube library.');
+  }
+
+  if (!video.file_path) {
+    if (video.youtube_id) {
+      return YouTubePlayer.play({
+        videoId: video.youtube_id,
+        title: video.title || 'LocalTube'
+      });
+    }
+    throw new Error('This video does not have a local file.');
+  }
+
+  const id = String(video.id);
+
+  // Recover a checkpoint left by an earlier player session or app interruption.
+  let checkpoint = { positionMs: 0, durationMs: 0 };
+
+  try {
+    checkpoint = await LocalPlayer.getCheckpoint({ videoId: id });
+  } catch (error) {
+    console.warn('Could not recover native playback checkpoint:', error);
+  }
+
+  const resumePositionMs = Math.max(
+    0,
+    Number(checkpoint?.positionMs) || 0
+  );
+
+  const checkpointDurationSeconds =
+    Math.max(0, Number(checkpoint?.durationMs) || 0) / 1000;
+
+  // Synchronize recovered native progress into SQLite.
+  if (resumePositionMs > 0 || checkpointDurationSeconds > 0) {
+    await androidRecordProgress({
+      videoId: video.id,
+      positionSeconds: resumePositionMs / 1000,
+      durationSeconds: checkpointDurationSeconds
+    });
+  }
+
+  const playbackResult = await LocalPlayer.play({
+    path: video.file_path,
+    title: video.title || 'LocalTube',
+    videoId: id,
+    resumePositionMs
+  });
+
+  // Save the final position returned by the native player.
+  if (playbackResult && playbackResult.videoId) {
+    await androidRecordProgress({
+      videoId: video.id,
+      positionSeconds: playbackResult.positionSeconds,
+      durationSeconds: playbackResult.durationSeconds
+    });
+  }
+
+  try {
+    await LocalPlayer.clearCheckpoint({ videoId: id });
+  } catch (error) {
+    console.warn('Could not clear native playback checkpoint:', error);
+  }
+
+  return playbackResult;
+}
+
+function unavailable(feature) {
+  return async () => {
+    throw new Error(`${feature} is not connected yet.`);
+  };
+}
+
+function createAndroidApi() {
+  return {
+    listVideos: androidListVideos,
+    listChannels: androidListChannels,
+    toggleBookmark: androidToggleBookmark,
+    updateTags: androidUpdateTags,
+    loadNotesPath: androidLoadNotesPath,
+    readNotes: androidReadNotes,
+    saveNotes: androidSaveNotes,
+    importFiles: androidImportFiles,
+    fetchChannel: androidFetchChannel,
+    openPlayer: androidOpenPlayer,
+    getVideoUrl: unavailable('Android video playback'),
+    getHistory: androidGetHistory,
+    recordProgress: androidRecordProgress,
+    getRecommendations: androidGetRecommendations,
+    getDataPath: async () => 'LocalTube Android private database'
+  };
+}
+
+export function createPlatformApi() {
+  // Electron must take priority because Capacitor reports "web"
+  // inside the Electron renderer.
+  if (window.localTube) return window.localTube;
+
+  if (Capacitor.getPlatform() === 'android') {
+    return createAndroidApi();
+  }
+
+  return {
+    listVideos: unavailable('Browser database preview'),
+    listChannels: unavailable('Browser database preview'),
+    toggleBookmark: unavailable('Browser database preview'),
+    updateTags: unavailable('Browser database preview'),
+    loadNotesPath: unavailable('Browser database preview'),
+    readNotes: unavailable('Browser database preview'),
+    saveNotes: unavailable('Browser database preview'),
+    importFiles: unavailable('Browser file picker'),
+    fetchChannel: unavailable('Browser channel import'),
+    openPlayer: unavailable('Browser video player'),
+    getVideoUrl: unavailable('Browser video playback'),
+    getHistory: unavailable('Browser database'),
+    recordProgress: unavailable('Browser database'),
+    getRecommendations: unavailable('Browser database'),
+    getDataPath: unavailable('Browser database')
+  };
+}
+
+
+
+==================================================
+FILE: android\app\src\main\java\com\localtube\app\LocalPlayerPlugin.java
+==================================================
+package com.localtube.app;
+
+import android.content.Intent;
+import android.text.TextUtils;
+
+import androidx.activity.result.ActivityResult;
+
+import com.getcapacitor.JSObject;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.ActivityCallback;
+import com.getcapacitor.annotation.CapacitorPlugin;
+
+import java.io.File;
+
+@CapacitorPlugin(name = "LocalPlayer")
+public class LocalPlayerPlugin extends Plugin {
+
+    private static final String PREFS = "localtube_playback";
+
+    @PluginMethod
+    public void play(PluginCall call) {
+        String path = call.getString("path");
+        String title = call.getString("title", "LocalTube");
+        String videoId = call.getString("videoId");
+        long resumePositionMs = call.getLong("resumePositionMs", 0L);
+
+        if (TextUtils.isEmpty(path)) {
+            call.reject("Video path is missing.");
+            return;
+        }
+
+        if (TextUtils.isEmpty(videoId)) {
+            call.reject("Video ID is missing.");
+            return;
+        }
+
+        File videoFile = new File(path);
+
+        if (!videoFile.exists() || !videoFile.isFile()) {
+            call.reject("The imported video file could not be found.");
+            return;
+        }
+
+        try {
+            Intent intent = new Intent(getActivity(), LocalPlayerActivity.class);
+
+            intent.putExtra("videoPath", videoFile.getAbsolutePath());
+            intent.putExtra("videoTitle", title);
+            intent.putExtra("videoId", videoId);
+            intent.putExtra("resumePositionMs", Math.max(0L, resumePositionMs));
+
+            startActivityForResult(call, intent, "handlePlayerResult");
+        } catch (Exception error) {
+            call.reject("Could not open the native video player: " + error.getMessage(), error);
+        }
+    }
+
+    @PluginMethod
+    public void getCheckpoint(PluginCall call) {
+        String videoId = call.getString("videoId");
+
+        if (TextUtils.isEmpty(videoId)) {
+            call.reject("Video ID is missing.");
+            return;
+        }
+
+        android.content.SharedPreferences prefs =
+            getContext().getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE);
+
+        long position = prefs.getLong("position_" + videoId, 0L);
+        long duration = prefs.getLong("duration_" + videoId, 0L);
+
+        if (duration > 0L && position >= duration * 0.9) {
+            position = 0L;
+        }
+
+        JSObject response = new JSObject();
+        response.put("positionMs", position);
+        response.put("durationMs", duration);
+        call.resolve(response);
+    }
+
+    @PluginMethod
+    public void clearCheckpoint(PluginCall call) {
+        String videoId = call.getString("videoId");
+
+        if (TextUtils.isEmpty(videoId)) {
+            call.reject("Video ID is missing.");
+            return;
+        }
+
+        android.content.SharedPreferences prefs =
+            getContext().getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE);
+
+        prefs.edit()
+            .remove("position_" + videoId)
+            .remove("duration_" + videoId)
+            .apply();
+
+        call.resolve();
+    }
+
+    @ActivityCallback
+    private void handlePlayerResult(PluginCall call, ActivityResult result) {
+        if (call == null) return;
+
+        Intent data = result.getData();
+
+        if (data == null) {
+            call.resolve();
+            return;
+        }
+
+        String videoId = data.getStringExtra("videoId");
+        long positionMs = Math.max(0L, data.getLongExtra("positionMs", 0L));
+        long durationMs = Math.max(0L, data.getLongExtra("durationMs", 0L));
+
+        JSObject response = new JSObject();
+        response.put("videoId", videoId);
+        response.put("positionSeconds", positionMs / 1000.0);
+        response.put("durationSeconds", durationMs / 1000.0);
+        response.put("completed", durationMs > 0L && positionMs >= durationMs * 0.9);
+
+        call.resolve(response);
+    }
+}
+
+
+==================================================
+FILE: android\app\src\main\java\com\localtube\app\LocalPlayerActivity.java
+==================================================
+package com.localtube.app;
+
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.graphics.Color;
+
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.media3.common.MediaItem;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.ui.PlayerView;
+
+import java.io.File;
+
+public class LocalPlayerActivity extends AppCompatActivity {
+
+    private static final String PREFS = "localtube_playback";
+
+    private ExoPlayer player;
+    private PlayerView playerView;
+
+    private final Handler progressHandler = new Handler(Looper.getMainLooper());
+
+    private String videoId;
+    private long lastPositionMs = 0L;
+    private long lastDurationMs = 0L;
+    private boolean resultSent = false;
+
+    private final Runnable checkpointRunnable = new Runnable() {
+        @Override
+        public void run() {
+            saveCheckpoint();
+            progressHandler.postDelayed(this, 5000L);
+        }
+    };
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        String path = getIntent().getStringExtra("videoPath");
+        String title = getIntent().getStringExtra("videoTitle");
+        videoId = getIntent().getStringExtra("videoId");
+
+        long resumePositionMs =
+            getIntent().getLongExtra("resumePositionMs", 0L);
+
+        if (path == null || path.trim().isEmpty() || videoId == null) {
+            setResult(RESULT_CANCELED);
+            finish();
+            return;
+        }
+
+        File videoFile = new File(path);
+
+        if (!videoFile.exists() || !videoFile.isFile()) {
+            setResult(RESULT_CANCELED);
+            finish();
+            return;
+        }
+
+        getWindow().setStatusBarColor(Color.BLACK);
+        getWindow().setNavigationBarColor(Color.BLACK);
+
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(Color.BLACK);
+
+        playerView = new PlayerView(this);
+        playerView.setUseController(true);
+        playerView.setControllerAutoShow(true);
+        playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);
+
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        );
+
+        root.addView(playerView, params);
+        setContentView(root);
+
+        setTitle(title == null ? "LocalTube" : title);
+
+        player = new ExoPlayer.Builder(this).build();
+        playerView.setPlayer(player);
+
+        player.setMediaItem(MediaItem.fromUri(Uri.fromFile(videoFile)));
+        player.prepare();
+
+        if (resumePositionMs > 0L) {
+            player.seekTo(resumePositionMs);
+        }
+
+        player.play();
+
+        progressHandler.postDelayed(checkpointRunnable, 5000L);
+    }
+
+    private void saveCheckpoint() {
+        if (player == null || videoId == null) return;
+
+        long position = Math.max(0L, player.getCurrentPosition());
+        long duration = Math.max(0L, player.getDuration());
+
+        if (duration > 0L && position >= duration * 0.9) {
+            position = 0L;
+        }
+
+        lastPositionMs = position;
+        lastDurationMs = duration;
+
+        SharedPreferences prefs =
+            getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+
+        prefs.edit()
+            .putLong("position_" + videoId, position)
+            .putLong("duration_" + videoId, duration)
+            .apply();
+    }
+
+    private void returnPlaybackResult() {
+        if (resultSent) return;
+
+        saveCheckpoint();
+        resultSent = true;
+
+        Intent result = new Intent();
+        result.putExtra("videoId", videoId);
+        result.putExtra("positionMs", lastPositionMs);
+        result.putExtra("durationMs", lastDurationMs);
+
+        setResult(RESULT_OK, result);
+    }
+
+    @Override
+    protected void onPause() {
+        saveCheckpoint();
+
+        if (player != null) {
+            player.pause();
+        }
+
+        super.onPause();
+    }
+
+    @Override
+    public void finish() {
+        returnPlaybackResult();
+        super.finish();
+    }
+
+    @Override
+    protected void onDestroy() {
+        progressHandler.removeCallbacks(checkpointRunnable);
+        returnPlaybackResult();
+
+        if (playerView != null) {
+            playerView.setPlayer(null);
+        }
+
+        if (player != null) {
+            player.release();
+            player = null;
+        }
+
+        super.onDestroy();
+    }
+}
+
+
+==================================================
+FILE: android\app\src\main\java\com\localtube\app\MainActivity.java
+==================================================
+package com.localtube.app;
+
+import com.getcapacitor.BridgeActivity;
+
+public class MainActivity extends BridgeActivity {
+    @Override
+    public void onCreate(android.os.Bundle savedInstanceState) {
+        registerPlugin(LocalMediaPlugin.class);
+        registerPlugin(LocalPlayerPlugin.class);
+        registerPlugin(YouTubePlayerPlugin.class);
+        super.onCreate(savedInstanceState);
+    }
+}
+
+
+
+==================================================
+FILE: android\app\src\main\java\com\localtube\app\YouTubePlayerActivity.java
+==================================================
+package com.localtube.app;
+
+import android.annotation.SuppressLint;
+import android.app.Activity;
+import android.os.Bundle;
+import android.view.Gravity;
+import android.view.ViewGroup;
+import android.webkit.JavascriptInterface;
+import android.webkit.WebChromeClient;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.TextView;
+
+public class YouTubePlayerActivity extends Activity {
+
+    private WebView webView;
+    private TextView statusView;
+    private ProgressBar progressBar;
+
+    private String videoId;
+    private String videoTitle;
+
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        videoId = getIntent().getStringExtra("videoId");
+        videoTitle = getIntent().getStringExtra("title");
+
+        if (videoTitle == null || videoTitle.trim().isEmpty()) {
+            videoTitle = "LocalTube";
+        }
+
+        if (videoId == null || !videoId.matches("[a-zA-Z0-9_-]{11}")) {
+            finish();
+            return;
+        }
+
+        buildScreen();
+        configureWebView();
+        webView.loadDataWithBaseURL(
+            "https://localhost/",
+            buildPlayerHtml(videoId),
+            "text/html",
+            "UTF-8",
+            null
+        );
+    }
+
+    private void buildScreen() {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(0xFF101010);
+
+        TextView titleView = new TextView(this);
+        titleView.setText(videoTitle);
+        titleView.setTextColor(0xFFFFFFFF);
+        titleView.setTextSize(18);
+        titleView.setPadding(18, 16, 18, 12);
+        titleView.setMaxLines(2);
+        root.addView(titleView, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        statusView = new TextView(this);
+        statusView.setText("Connecting to YouTube...");
+        statusView.setTextColor(0xFFE0E0E0);
+        statusView.setTextSize(14);
+        statusView.setGravity(Gravity.CENTER);
+        statusView.setPadding(12, 8, 12, 8);
+        root.addView(statusView, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        progressBar = new ProgressBar(this);
+        root.addView(progressBar, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        webView = new WebView(this);
+        root.addView(webView, new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            0,
+            1
+        ));
+
+        setContentView(root);
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private void configureWebView() {
+        WebSettings settings = webView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setMediaPlaybackRequiresUserGesture(true);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
+        settings.setSupportMultipleWindows(false);
+
+        webView.addJavascriptInterface(new PlayerBridge(), "LocalTubeBridge");
+        webView.setWebChromeClient(new WebChromeClient());
+
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                updateStatus("Loading YouTube player...");
+            }
+        });
+    }
+
+    private String buildPlayerHtml(String id) {
+        return "<!doctype html>"
+            + "<html><head>"
+            + "<meta name='viewport' content='width=device-width,"
+            + "initial-scale=1,maximum-scale=1,user-scalable=no'>"
+            + "<style>"
+            + "html,body{margin:0;padding:0;background:#000;width:100%;height:100%;}"
+            + "#player{width:100%;height:100%;}"
+            + "</style></head><body>"
+            + "<div id='player'></div>"
+            + "<script>"
+            + "var player;"
+            + "function report(s){"
+            + "try{LocalTubeBridge.onPlayerStatus(String(s));}catch(e){}"
+            + "}"
+            + "function onYouTubeIframeAPIReady(){"
+            + "player=new YT.Player('player',{"
+            + "width:'100%',height:'100%',"
+            + "videoId:'" + id + "',"
+            + "playerVars:{autoplay:0,controls:1,playsinline:1,rel:0,"
+            + "fs:1,enablejsapi:1},"
+            + "events:{"
+            + "onReady:function(){report('ready');},"
+            + "onStateChange:function(e){"
+            + "if(e.data===1)report('playing');"
+            + "else if(e.data===2)report('paused');"
+            + "else if(e.data===0)report('ended');"
+            + "},"
+            + "onError:function(e){report('error:'+e.data);}"
+            + "}"
+            + "});"
+            + "}"
+            + "</script>"
+            + "<script src='https://www.youtube.com/iframe_api'></script>"
+            + "</body></html>";
+    }
+
+    private void updateStatus(String message) {
+        runOnUiThread(() -> {
+            if (statusView != null) {
+                statusView.setText(message);
+            }
+        });
+    }
+
+    private class PlayerBridge {
+        @JavascriptInterface
+        public void onPlayerStatus(String status) {
+            if ("ready".equals(status)) {
+                updateStatus("YouTube player ready. Press Play to start.");
+                runOnUiThread(() -> {
+                    if (progressBar != null) progressBar.setVisibility(
+                        android.view.View.GONE
+                    );
+                });
+            } else if ("playing".equals(status)) {
+                updateStatus("Playing");
+            } else if ("paused".equals(status)) {
+                updateStatus("Paused");
+            } else if ("ended".equals(status)) {
+                updateStatus("Video finished");
+            } else if (status != null && status.startsWith("error:")) {
+                String code = status.substring("error:".length());
+                updateStatus(errorMessage(code));
+                runOnUiThread(() -> {
+                    if (progressBar != null) progressBar.setVisibility(
+                        android.view.View.GONE
+                    );
+                });
+            }
+        }
+    }
+
+    private String errorMessage(String code) {
+        switch (code) {
+            case "2":
+                return "YouTube rejected the video ID or player request.";
+            case "5":
+                return "This video cannot be played in the HTML5 player.";
+            case "100":
+                return "This video is unavailable or has been removed.";
+            case "101":
+            case "150":
+                return "The video owner does not allow embedded playback.";
+            case "153":
+                return "YouTube requires valid client identification for this playback.";
+            default:
+                return "YouTube playback error (" + code + ").";
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (webView != null) {
+            webView.stopLoading();
+        }
+        finish();
+        super.onBackPressed();
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (webView != null) {
+            webView.stopLoading();
+            webView.loadUrl("about:blank");
+            webView.removeJavascriptInterface("LocalTubeBridge");
+            webView.destroy();
+            webView = null;
+        }
+        super.onDestroy();
+    }
+}
+
+
+==================================================
+FILE: android\app\src\main\AndroidManifest.xml
+==================================================
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/AppTheme">
+
+        <activity
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+            android:name=".MainActivity"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
+            android:launchMode="singleTask"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+        </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"></meta-data>
+        </provider>
+        <activity
+            android:name=".LocalPlayerActivity"
+            android:exported="false"
+            android:screenOrientation="sensor"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/AppTheme.NoActionBar" />
+            <activity
+            android:name=".YouTubePlayerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/AppTheme.NoActionBar" />
+    </application>
+
+    <!-- Permissions -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>
+
+
+
+
+==================================================
+FILE: android\app\build.gradle
+==================================================
+apply plugin: 'com.android.application'
+
+android {
+    namespace = "com.localtube.app"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "com.localtube.app"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation "androidx.media3:media3-exoplayer:1.5.1"
+    implementation "androidx.media3:media3-ui:1.5.1"
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}
+
+
+
+
+==================================================
+FILE: package.json
+==================================================
+{
+    "name": "localtube",
+    "version": "1.0.0",
+    "description": "Local-first distraction-reduced video library for Windows",
+    "main": "electron/main.cjs",
+    "author": "LocalTube",
+    "license": "MIT",
+    "scripts": {
+        "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+        "start": "electron .",
+        "build": "vite build",
+        "dist": "npm run build && electron-builder --win nsis",
+        "postinstall": "electron-builder install-app-deps"
+    },
+    "dependencies": {
+        "@capacitor-community/sqlite": "^8.1.1",
+        "@capacitor/android": "^8.6.0",
+        "@capacitor/core": "^8.6.0",
+        "@capacitor/filesystem": "^8.1.5",
+        "@capacitor/preferences": "^8.0.1",
+        "@capawesome/capacitor-file-picker": "^8.1.1",
+        "better-sqlite3": "^11.7.0",
+        "jeep-sqlite": "^2.8.0",
+        "lucide-react": "^0.468.0",
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1"
+    },
+    "devDependencies": {
+        "@capacitor/cli": "^8.6.0",
+        "@vitejs/plugin-react": "^4.3.4",
+        "concurrently": "^9.1.2",
+        "cross-env": "^10.1.0",
+        "electron": "33.2.1",
+        "electron-builder": "25.1.8",
+        "vite": "^6.0.5",
+        "wait-on": "^8.0.1"
+    },
+    "build": {
+        "appId": "com.localtube.desktop",
+        "productName": "LocalTube",
+        "directories": {
+            "output": "release"
+        },
+        "files": [
+            "dist/**/*",
+            "electron/**/*",
+            "package.json"
+        ],
+        "asarUnpack": [
+            "node_modules/better-sqlite3/**/*"
+        ],
+        "win": {
+            "target": "nsis",
+            "artifactName": "LocalTube-Setup-${version}.${ext}"
+        },
+        "nsis": {
+            "oneClick": false,
+            "allowToChangeInstallationDirectory": true,
+            "createDesktopShortcut": true
+        }
+    }
+}
+
+
+========== PROJECT STRUCTURE ==========
+D:\LocalTube\src\main.backup.jsx
+D:\LocalTube\src\main.before-home-focus-navigation.jsx
+D:\LocalTube\src\main.before-mobile.jsx
+D:\LocalTube\src\main.before-screen-insertion.jsx
+D:\LocalTube\src\main.jsx
+D:\LocalTube\src\style.backup.css
+D:\LocalTube\src\style.css
+D:\LocalTube\src\platform\index.js
+D:\LocalTube\src\platform\index.js.bak_20261101_121053
+D:\LocalTube\src\platform\index.pre-offline.js
+
+========== ANDROID JAVA STRUCTURE ==========
+D:\LocalTube\android\app\src\main\java\com\localtube\app\LocalMediaPlugin.java
+D:\LocalTube\android\app\src\main\java\com\localtube\app\LocalPlayerActivity.java
+D:\LocalTube\android\app\src\main\java\com\localtube\app\LocalPlayerPlugin.java
+D:\LocalTube\android\app\src\main\java\com\localtube\app\MainActivity.java
+D:\LocalTube\android\app\src\main\java\com\localtube\app\YouTubePlayerActivity.java
+D:\LocalTube\android\app\src\main\java\com\localtube\app\YouTubePlayerActivity.java.bak_20261101_121053
+D:\LocalTube\android\app\src\main\java\com\localtube\app\YouTubePlayerPlugin.java
+D:\LocalTube\android\app\src\main\java\com\localtube\app\YouTubePlayerPlugin.java.backup_20261101_120339
+
+========== BUILD CONFIGURATION ==========
+v22.23.3
+10.9.9
+java version "21.0.6" 2025-01-21 LTS
+Java(TM) SE Runtime Environment (build 21.0.6+8-LTS-188)
+Java HotSpot(TM) 64-Bit Server VM (build 21.0.6+8-LTS-188, mixed mode, sharing)
+
+========== INSPECTION COMPLETE ==========
