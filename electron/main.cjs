@@ -435,15 +435,16 @@ ipcMain.handle('library:addYouTubeItems', (_event, items) => {
     let added = 0;
 
     for (const item of rows) {
-      if (!item?.youtubeId) continue;
-      if (findExisting.get(String(item.youtubeId))) continue;
+      const youtubeId = String(item?.youtubeId || '').trim();
+      if (!/^[a-zA-Z0-9_-]{11}$/.test(youtubeId)) continue;
+      if (findExisting.get(youtubeId)) continue;
 
       insert.run({
         title: String(item.title || 'Untitled').slice(0, 500),
         channelTitle: String(item.channelTitle || '').slice(0, 300),
         channelId: String(item.channelId || ''),
-        youtubeId: String(item.youtubeId),
-        youtubeUrl: String(item.youtubeUrl || ''),
+        youtubeId,
+        youtubeUrl: `https://www.youtube.com/watch?v=${youtubeId}`,
         thumbnailUrl: String(item.thumbnailUrl || ''),
         description: String(item.description || '').slice(0, 4000)
       });
@@ -886,7 +887,8 @@ ipcMain.handle('settings:save', (_event, settings = {}) => {
 
   const transaction = getDb().transaction(() => {
     for (const key of allowedSettings) {
-      if (Object.prototype.hasOwnProperty.call(settings, key)) {
+      if (Object.prototype.hasOwnProperty.call(settings, key) &&
+          typeof settings[key] === 'boolean') {
         save.run(
           `focus:${key}`,
           JSON.stringify(settings[key])
