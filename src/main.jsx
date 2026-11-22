@@ -46,6 +46,8 @@ function App() {
   const [message, setMessage] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [playbackTime, setPlaybackTime] = useState(0);
+  const [focusSettings, setFocusSettings] = useState({ enabled: true, hideYouTube: true, hideRecommendations: true, hideShorts: true });
+  const [settingsReady, setSettingsReady] = useState(false);
 
   // Open a video in the dedicated LocalTube player window.
   async function openVideo(video) {
@@ -158,6 +160,46 @@ function App() {
       setMessage(error.message);
     });
   }, [page, query, bookmarksOnly, activeChannel]);
+
+  // Restore distraction controls. Desktop persists these in SQLite;
+  // Android/browser fallback uses local preferences without changing the library DB.
+  useEffect(() => {
+    let alive = true;
+    async function restoreFocusSettings() {
+      try {
+        let saved = {};
+        if (typeof api.getFocusSettings === 'function') {
+          saved = await api.getFocusSettings();
+        } else {
+          try { saved = JSON.parse(localStorage.getItem('lt_focus_settings') || '{}'); } catch { saved = {}; }
+        }
+        if (alive) {
+          setFocusSettings(current => ({ ...current, ...saved }));
+          setSettingsReady(true);
+        }
+      } catch (error) {
+        console.warn('[LocalTube] Focus settings restore failed:', error);
+        if (alive) setSettingsReady(true);
+      }
+    }
+    restoreFocusSettings();
+    return () => { alive = false; };
+  }, []);
+
+  async function updateFocusSetting(key, value) {
+    const next = { ...focusSettings, [key]: value };
+    setFocusSettings(next);
+    try {
+      if (typeof api.saveFocusSettings === 'function') {
+        await api.saveFocusSettings({ [key]: value });
+      } else {
+        localStorage.setItem('lt_focus_settings', JSON.stringify(next));
+      }
+      setMessage('Focus preferences saved.');
+    } catch (error) {
+      setMessage(`Could not save focus preferences: ${error.message || error}`);
+    }
+  }
 
   // Receive playback timestamps from the separate Electron player window.
   useEffect(() => {
@@ -978,10 +1020,29 @@ function App() {
             </div>
 
             <p className="hint">
-              LocalTube stores your catalogue database in your Windows
-              application data folder. Your original video files are not
-              copied or moved.
+              Control recommendations and browsing distractions. Your original
+              video files remain in their existing locations.
             </p>
+
+            <div className="settings-group">
+              <h3>Focus &amp; distraction controls</h3>
+              {[
+                ['enabled', 'Enable Focus defaults', 'Prioritise your local library.'],
+                ['hideYouTube', 'Hide YouTube discovery', 'Keep channel catalogue access intentional.'],
+                ['hideRecommendations', 'Hide recommendations', 'Reduce suggested-content shelves.'],
+                ['hideShorts', 'Block Shorts navigation', 'Never open Shorts as a top-level destination.']
+              ].map(([key, label, description]) => (
+                <label className="setting-row" key={key}>
+                  <span><strong>{label}</strong><small>{description}</small></span>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(focusSettings[key])}
+                    disabled={!settingsReady}
+                    onChange={event => updateFocusSetting(key, event.target.checked)}
+                  />
+                </label>
+              ))}
+            </div>
 
             <button
               className="outline-btn"
