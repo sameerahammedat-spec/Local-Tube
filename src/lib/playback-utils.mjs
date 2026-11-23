@@ -63,3 +63,21 @@ export function normalizeProgressSample(positionSeconds, durationSeconds) {
   const safePosition = Math.min(position, duration);
   return { positionSeconds: safePosition, durationSeconds: duration, completed: safePosition / duration >= 0.9 };
 }
+
+
+/** Return a human-readable title instead of exposing numeric file/record IDs. */
+export function getDisplayVideoTitle(video = {}) {
+  const title = String(video.title || '').trim();
+  if (title && !/^\d{6,}$/.test(title)) return title;
+  const channel = String(video.channel_title || '').trim();
+  if (channel) return channel;
+  return video.isLocal || video.file_path ? 'Local video' : 'YouTube video';
+}
+
+/** Native Android file pickers report user dismissal as a rejected promise on some versions. */
+export function isUserCancelledPicker(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  const code = String(error?.code || '').toLowerCase();
+  return /pickfiles?\s+cancelled?|cancelled? by user|user cancelled|user canceled|operation cancelled|operation canceled/.test(message) ||
+    /cancelled|canceled/.test(code);
+}
