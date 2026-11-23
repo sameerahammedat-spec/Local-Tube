@@ -1149,3 +1149,11 @@ button{-webkit-tap-highlight-color:transparent}
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}
 }
+
+
+.topbar-settings{
+  width:40px;height:40px;flex:0 0 40px;display:grid;place-items:center;
+  border:1px solid #dfe5ef;border-radius:11px;background:#fff;color:#586780;
+}
+.topbar-settings:hover{background:#f2f6fd;color:#2563eb;border-color:#cbdcf6}
+@media(max-width:700px){.topbar-settings{width:41px;height:42px;flex-basis:41px}}
