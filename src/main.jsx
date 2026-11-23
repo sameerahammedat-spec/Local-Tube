@@ -1131,8 +1131,13 @@ function VideoGrid({ videos, selected, onSelect, onPlay }) {
 
           <div className="video-card-copy">
             <strong>{getDisplayVideoTitle(video)}</strong>
-            <span>{video.channel_title || 'Local videos'}</span>
+            <span>{video.isLocal ? 'ON THIS DEVICE' : (video.channel_title || 'YOUTUBE CHANNEL')}</span>
           </div>
+          {Number(video.durationSeconds || video.duration_seconds) > 0 && Number(video.progressSeconds || video.position_seconds) > 0 && (
+            <div className="card-progress" aria-label="Watch progress">
+              <span style={{ width: `${Math.min(100, (Number(video.progressSeconds || video.position_seconds) / Number(video.durationSeconds || video.duration_seconds)) * 100)}%` }} />
+            </div>
+          )}
         </button>
       ))}
     </div>
