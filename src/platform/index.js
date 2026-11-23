@@ -1,6 +1,6 @@
 
 import { registerPlugin, Capacitor } from '@capacitor/core';
-import { normalizeProgressSample } from '../lib/playback-utils.mjs';
+import { normalizeProgressSample, isUserCancelledPicker } from '../lib/playback-utils.mjs';
 import { FilePicker } from '@capawesome/capacitor-file-picker';
 import {
   CapacitorSQLite,
@@ -580,9 +580,17 @@ async function androidGetRecommendations(limit = 20) {
 async function androidImportFiles() {
   const db = await getAndroidDb();
 
-  const pickerResult = await FilePicker.pickVideos({
-    limit: 0
-  });
+  let pickerResult;
+  try {
+    pickerResult = await FilePicker.pickVideos({ limit: 0 });
+  } catch (error) {
+    // Android's document picker can reject with "pickFiles canceled"
+    // when the user simply presses Back. Treat that as a normal dismissal.
+    if (isUserCancelledPicker(error)) {
+      return { cancelled: true, addedCount: 0, skippedCount: 0, errors: [] };
+    }
+    throw error;
+  }
 
   const files = pickerResult?.files || [];
 
