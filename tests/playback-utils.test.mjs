@@ -8,7 +8,9 @@ import {
   appendTimestamp,
   filterVideosForFocus,
   shouldShowRecommendations,
-  normalizeProgressSample
+  normalizeProgressSample,
+  getDisplayVideoTitle,
+  isUserCancelledPicker
 } from '../src/lib/playback-utils.mjs';
 
 test('formats timestamps below one hour as mm:ss', () => {
@@ -73,4 +75,16 @@ test('rejects invalid progress samples and clamps valid progress', () => {
   assert.equal(normalizeProgressSample(10, 0), null);
   assert.equal(normalizeProgressSample(-1, 100), null);
   assert.deepEqual(normalizeProgressSample(120, 100), { positionSeconds: 100, durationSeconds: 100, completed: true });
+});
+
+test('replaces numeric-only imported titles with human-readable labels', () => {
+  assert.equal(getDisplayVideoTitle({ title: '1000118597', isLocal: true }), 'Local video');
+  assert.equal(getDisplayVideoTitle({ title: '1000118597', channel_title: 'MercifulServant' }), 'MercifulServant');
+  assert.equal(getDisplayVideoTitle({ title: 'A meaningful title' }), 'A meaningful title');
+});
+
+test('recognizes Android picker dismissal without treating it as an error', () => {
+  assert.equal(isUserCancelledPicker(new Error('pickFiles canceled')), true);
+  assert.equal(isUserCancelledPicker({ code: 'CANCELED' }), true);
+  assert.equal(isUserCancelledPicker(new Error('Permission denied')), false);
 });
