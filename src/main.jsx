@@ -21,12 +21,15 @@ import {
   ChevronRight,
   Shield,
   LibraryBig,
-  PanelRight
+  PanelRight,
+  FileVideo,
+  Import,
+  Tv
 } from 'lucide-react';
 import './style.css';
 
 import { createPlatformApi } from './platform/index.js';
-import { appendTimestamp, normalizeFocusSettings, filterVideosForFocus, shouldShowRecommendations } from './lib/playback-utils.mjs';
+import { appendTimestamp, normalizeFocusSettings, filterVideosForFocus, shouldShowRecommendations, getDisplayVideoTitle, isUserCancelledPicker } from './lib/playback-utils.mjs';
 
 const api = createPlatformApi();
 
@@ -143,10 +146,9 @@ function App() {
           console.warn('[LocalTube] Recommendations unavailable:', error);
         }
       }
-    } else if (page === 'channels') {
+    } else if (page === 'channels' || page === 'channel-import') {
       await loadChannels();
-
-      if (activeChannel) {
+      if (page === 'channels' && activeChannel) {
         await loadChannelVideos(activeChannel);
       } else {
         setVideos([]);
@@ -193,16 +195,6 @@ function App() {
     restoreFocusSettings();
     return () => { alive = false; };
   }, []);
-
-  useEffect(() => {
-    if (focusSettings.enabled && focusSettings.hideYouTube) {
-      if (page === 'channels') {
-        setPage('local');
-        setActiveChannel('');
-      }
-      setSelected(current => current && !current.isLocal ? null : current);
-    }
-  }, [focusSettings.enabled, focusSettings.hideYouTube, page]);
 
   async function updateFocusSetting(key, value) {
     const next = { ...focusSettings, [key]: value };
@@ -322,6 +314,10 @@ function App() {
 
       const result = await api.importFiles();
 
+      if (result?.cancelled || result?.canceled) {
+        setMessage('');
+        return;
+      }
       if (!result || typeof result.addedCount !== 'number') {
         throw new Error('Unexpected response from local import service.');
       }
@@ -344,6 +340,10 @@ function App() {
         : '';
       setMessage(`Import finished: ${importSummary}${importErrors}`);
     } catch (error) {
+      if (isUserCancelledPicker(error)) {
+        setMessage('');
+        return;
+      }
       console.error('[LocalTube] Local import failed:', error);
       setMessage(`Import failed: ${error.message || error}`);
     }
@@ -525,20 +525,31 @@ function App() {
           My Library
         </button>
 
-        {!(focusSettings.enabled && focusSettings.hideYouTube) && (
+        <button
+          className={`nav-item ${page === 'channel-import' ? 'active' : ''}`}
+          onClick={() => {
+            setPage('channel-import');
+            setSelected(null);
+            setBookmarksOnly(false);
+          }}
+        >
+          <Import size={18} />
+          Import Channel
+        </button>
+
         <button
           className={`nav-item ${page === 'channels' ? 'active' : ''}`}
           onClick={() => {
             setPage('channels');
             setSelected(null);
             setBookmarksOnly(false);
+            setActiveChannel('');
           }}
         >
-          <Youtube size={18} />
-          Channel Vault
+          <Tv size={18} />
+          Imported Channels
           <span>{channels.length}</span>
         </button>
-        )}
 
         <button
           className={`nav-item ${page === 'bookmarks' ? 'active' : ''}`}
@@ -587,15 +598,11 @@ function App() {
           <div>
             <div className="eyebrow">YOUR PRIVATE ENTERTAINMENT SPACE</div>
             <h1>
-              {page === 'home'
-                ? 'Your personal video space'
-                : page === 'focus'
-                  ? 'Focus mode'
-                  : page === 'local'
-                    ? 'Local videos'
-                    : page === 'channels'
-                      ? 'YouTube channels'
-                      : 'Bookmarks'}
+              {page === 'home' ? 'Home' :
+                page === 'focus' ? 'Focus space' :
+                page === 'local' ? 'My videos' :
+                page === 'channel-import' ? 'Import a channel' :
+                page === 'channels' ? 'Imported channels' : 'My list'}
             </h1>
           </div>
 
@@ -648,7 +655,7 @@ function App() {
               </div>
               <div className="mobile-hero-copy">
                 <span className="eyebrow">{featuredVideo ? 'PICK UP WHERE YOU LEFT OFF' : 'WELCOME TO YOUR PRIVATE CINEMA'}</span>
-                <h2>{featuredVideo ? featuredVideo.title : <>Your videos.<br />Your world.</>}</h2>
+                <h2>{featuredVideo ? getDisplayVideoTitle(featuredVideo) : <>Your videos.<br />Your world.</>}</h2>
                 <p>{featuredVideo ? (featuredVideo.channel_title || 'Continue from your personal collection') : 'A beautiful home for the videos you choose to keep. No endless feeds. Just what matters to you.'}</p>
                 <div className="hero-actions">
                   {featuredVideo && (
@@ -756,98 +763,55 @@ function App() {
             )}
           </section>
         )}
-        {page === 'channels' && !(focusSettings.enabled && focusSettings.hideYouTube) && (
-          <section className="channel-page">
-            <form
-              className="channel-form panel"
-              onSubmit={importChannel}
-            >
-              <h2>Import a YouTube channel</h2>
-
-              <label>Channel URL or @handle</label>
-              <input
-                value={channelUrl}
-                onChange={event => setChannelUrl(event.target.value)}
-                placeholder="https://www.youtube.com/@GoogleDevelopers"
-                required
-              />
-
-              <label>YouTube Data API v3 key</label>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={event => setApiKey(event.target.value)}
-                placeholder="Your API key"
-                required
-              />
-
-              <p className="hint">
-                This imports public video catalogue information, not video
-                files. Up to 250 recent uploads are checked per import.
-              </p>
-
-              <button
-                className="primary-btn"
-                disabled={channelBusy}
-              >
-                <Download size={17} />
-                {channelBusy ? 'Importing channel...' : 'Import channel'}
-              </button>
-            </form>
-
-            <div className="channel-layout">
-              <section className="channel-list panel">
-                <h3>Your channels</h3>
-
-                {channels.length === 0 && (
-                  <p className="hint">No channels imported yet.</p>
-                )}
-
-                {channels.map(channel => (
-                  <button
-                    key={channel.channelId}
-                    className={`channel-row ${
-                      activeChannel === channel.channelId ? 'active' : ''
-                    }`}
-                    onClick={() => selectChannel(channel.channelId)}
-                  >
-                    <Youtube size={18} />
-
-                    <span>
-                      <strong>{channel.channelTitle}</strong>
-                      <small>
-                        {channel.videoCount} catalogue videos
-                      </small>
-                    </span>
-                  </button>
-                ))}
-              </section>
-
-              <section className="channel-videos">
-                <div className="section-head">
-                  <div>
-                    <h2>
-                      {selectedChannel
-                        ? selectedChannel.channelTitle
-                        : 'Select a channel'}
-                    </h2>
-
-                    <p>
-                      {selectedChannel
-                        ? `${videos.length} videos in this channel`
-                        : 'Your imported channel videos will appear here.'}
-                    </p>
-                  </div>
-                </div>
-
-                <VideoGrid
-                  videos={visibleVideos}
-                  selected={selected}
-                  onSelect={setSelected}
-                  onPlay={openVideo}
-                />
-              </section>
+        {page === 'channel-import' && (
+          <section className="channel-page channel-import-page">
+            <div className="channel-intro">
+              <span className="eyebrow">YOUTUBE CATALOGUE</span>
+              <h2>Bring your favourite channels into LocalTube.</h2>
+              <p>Import public video details from a channel. Your videos stay grouped by channel, separate from local files.</p>
             </div>
+            <form className="channel-form panel" onSubmit={importChannel}>
+              <div className="form-step"><span>01</span><div><strong>Channel details</strong><small>Paste a channel URL, channel ID or @handle</small></div></div>
+              <label>YOUTUBE CHANNEL</label>
+              <input value={channelUrl} onChange={event => setChannelUrl(event.target.value)} placeholder="youtube.com/@GoogleDevelopers" required />
+              <label>YOUTUBE DATA API KEY</label>
+              <input type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder="Paste your API key" required />
+              <p className="hint">LocalTube imports public catalogue information and thumbnails. It does not download YouTube video files. Up to 250 recent uploads are checked per import.</p>
+              <div className="channel-form-actions">
+                <button className="primary-btn" disabled={channelBusy}><Download size={17} />{channelBusy ? 'Importing channel…' : 'Import channel'}</button>
+                <button type="button" className="secondary-btn" onClick={() => setPage('channels')}>View imported channels <ChevronRight size={16} /></button>
+              </div>
+            </form>
+            <div className="import-footnote"><ShieldCheck size={16} /> Your channel catalogue is stored in your LocalTube library on this device.</div>
+          </section>
+        )}
+
+        {page === 'channels' && (
+          <section className="channel-page imported-channels-page">
+            <div className="channel-page-heading">
+              <div><span className="eyebrow">YOUR YOUTUBE COLLECTION</span><h2>Imported channels</h2><p>Each channel has its own catalogue. Local video files remain in My Videos.</p></div>
+              <button className="primary-btn" onClick={() => setPage('channel-import')}><Plus size={16} /> Import channel</button>
+            </div>
+            {channels.length === 0 ? (
+              <div className="channel-empty panel"><div className="channel-empty-icon"><Youtube size={28} /></div><h3>No channels imported yet</h3><p>Start by adding a channel. Its catalogue will appear here, separate from your local videos.</p><button className="primary-btn" onClick={() => setPage('channel-import')}><Plus size={16} /> Import your first channel</button></div>
+            ) : (
+              <div className="channel-layout">
+                <section className="channel-list panel">
+                  <div className="channel-list-heading"><h3>CHANNELS</h3><span>{channels.length} imported</span></div>
+                  {channels.map(channel => (
+                    <button key={channel.channelId} className={`channel-row ${activeChannel === channel.channelId ? 'active' : ''}`} onClick={() => selectChannel(channel.channelId)}>
+                      <span className="channel-avatar"><Youtube size={19} /></span>
+                      <span><strong>{channel.channelTitle}</strong><small>{channel.videoCount} videos in catalogue</small></span>
+                      <ChevronRight size={16} />
+                    </button>
+                  ))}
+                </section>
+                <section className="channel-videos">
+                  <div className="section-head"><div><h2>{selectedChannel ? selectedChannel.channelTitle : 'Choose a channel'}</h2><p>{selectedChannel ? `${videos.length} catalogue videos` : 'Select a channel to browse its videos.'}</p></div></div>
+                  {selectedChannel ? <VideoGrid videos={videos} selected={selected} onSelect={setSelected} onPlay={openVideo} /> : <div className="channel-select-prompt"><Tv size={26} /><span>Select a channel to view its catalogue.</span></div>}
+                </section>
+              </div>
+            )}
           </section>
         )}
 
@@ -913,7 +877,7 @@ function App() {
               <div className="player-heading">
                 <div>
                   <span className="eyebrow"><PanelRight size={12} /> NOW IN YOUR STUDIO</span>
-                  <h2>{selected.title}</h2>
+                  <h2>{getDisplayVideoTitle(selected)}</h2>
                   <p>{selected.channel_title}</p>
                 </div>
 
@@ -1137,7 +1101,7 @@ function VideoGrid({ videos, selected, onSelect, onPlay }) {
             onSelect(video);
             onPlay(video);
           }}
-          title={`Play ${video.title}`}
+          title={`Play ${getDisplayVideoTitle(video)}`}
         >
           <div className="thumb">
             {video.thumbnail_url ? (
@@ -1166,7 +1130,7 @@ function VideoGrid({ videos, selected, onSelect, onPlay }) {
           </div>
 
           <div className="video-card-copy">
-            <strong>{video.title}</strong>
+            <strong>{getDisplayVideoTitle(video)}</strong>
             <span>{video.channel_title || 'Local videos'}</span>
           </div>
         </button>
