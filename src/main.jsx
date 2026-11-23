@@ -22,7 +22,6 @@ import {
   Shield,
   LibraryBig,
   PanelRight,
-  FileVideo,
   Import,
   Tv
 } from 'lucide-react';
@@ -625,6 +624,9 @@ function App() {
 
             <div className="topbar-right">
               <div className="privacy-pill"><ShieldCheck size={14} /> PRIVATE LIBRARY</div>
+              <button className="topbar-settings" onClick={() => setShowSettings(true)} aria-label="Open settings" title="Settings">
+                <Settings size={17} />
+              </button>
               <button className="primary-btn" onClick={importLocalFiles}>
                 <Plus size={17} /> Import videos
               </button>
