@@ -596,6 +596,7 @@ async function androidImportFiles() {
 
   if (!files.length) {
     return {
+      cancelled: true,
       addedCount: 0,
       skippedCount: 0,
       errors: []
