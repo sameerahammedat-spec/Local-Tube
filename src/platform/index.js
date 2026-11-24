@@ -164,58 +164,68 @@ function mapVideo(row) {
 
 async function enrichVideos(rows) {
   const videos = (rows || []).map(mapVideo);
+  let nextIndex = 0;
 
-  await Promise.all(
-    videos.map(async video => {
-      if (!video.file_path) {
-        video.fileExists = false;
-        return;
-      }
+  async function enrichOne(video) {
+    if (!video.file_path) {
+      video.fileExists = false;
+      return;
+    }
 
-      try {
-        const result = await LocalMedia.fileExists({
-          path: video.file_path
-        });
+    try {
+      const result = await LocalMedia.fileExists({
+        path: video.file_path
+      });
 
-        video.fileExists = Boolean(result?.exists);
+      video.fileExists = Boolean(result?.exists);
 
-        // Older imports do not have a poster yet. Generate one on demand
-        // and persist its WebView-safe URL so later library loads are instant.
-        if (video.fileExists && !video.thumbnail_url) {
-          try {
-            const thumbnail = await LocalMedia.createThumbnail({
-              path: video.file_path
-            });
+      // Older imports do not have a poster yet. Generate one on demand
+      // and persist its WebView-safe URL so later library loads are instant.
+      if (video.fileExists && !video.thumbnail_url) {
+        try {
+          const thumbnail = await LocalMedia.createThumbnail({
+            path: video.file_path
+          });
 
-            if (thumbnail?.path) {
-              const thumbnailUrl = Capacitor.convertFileSrc(thumbnail.path);
-              video.thumbnail_url = thumbnailUrl;
+          if (thumbnail?.path) {
+            const thumbnailUrl = Capacitor.convertFileSrc(thumbnail.path);
+            video.thumbnail_url = thumbnailUrl;
 
-              await (await getAndroidDb()).run(
-                'UPDATE videos SET thumbnail_url = ? WHERE id = ?',
-                [thumbnailUrl, Number(video.id)]
-              );
-            }
-          } catch (thumbnailError) {
-            console.warn(
-              '[LocalTube] Thumbnail generation skipped:',
-              video.title,
-              thumbnailError
+            await (await getAndroidDb()).run(
+              'UPDATE videos SET thumbnail_url = ? WHERE id = ?',
+              [thumbnailUrl, Number(video.id)]
             );
           }
+        } catch (thumbnailError) {
+          console.warn(
+            '[LocalTube] Thumbnail generation skipped:',
+            video.title,
+            thumbnailError
+          );
         }
-      } catch (error) {
-        console.warn(
-          '[LocalTube] Could not check file:',
-          video.file_path,
-          error
-        );
-
-        video.fileExists = false;
       }
-    })
-  );
+    } catch (error) {
+      console.warn(
+        '[LocalTube] Could not check file:',
+        video.file_path,
+        error
+      );
 
+      video.fileExists = false;
+    }
+  }
+
+  // Keep native video decoders bounded so a large library cannot exhaust
+  // memory by opening hundreds of MediaMetadataRetriever instances at once.
+  const workerCount = Math.min(4, videos.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < videos.length) {
+      const index = nextIndex++;
+      await enrichOne(videos[index]);
+    }
+  });
+
+  await Promise.all(workers);
   return videos;
 }
 
