@@ -1344,3 +1344,13 @@ button, input, textarea { font-family: inherit; }
   .sidebar > .nav-item svg { width: 22px; height: 22px; stroke-width: 2.1; }
   .mobile-hero { min-height: 285px; }
 }
+
+
+.video-duration{
+  position:absolute;right:9px;bottom:9px;z-index:2;
+  padding:4px 6px;border-radius:5px;
+  background:rgba(8,15,29,.82);color:#fff;
+  font-size:10px;font-weight:750;font-variant-numeric:tabular-nums;
+  letter-spacing:.2px;line-height:1;
+}
+@media(max-width:700px){.video-duration{right:7px;bottom:7px;font-size:9px}}
