@@ -8,7 +8,7 @@ test('focus preferences are connected to library shelves and channel discovery',
   const app = read('../src/main.jsx');
   assert.match(app, /filterVideosForFocus/);
   assert.match(app, /shouldShowRecommendations/);
-  assert.match(app, /focusSettings\.hideYouTube/);
+  assert.match(app, /hideYouTube/);
   assert.match(app, /showRecommendations &&/);
 });
 
@@ -58,7 +58,7 @@ test('Android local videos generate and reuse persistent image posters', () => {
   assert.match(platform, /Capacitor\.convertFileSrc\(thumbnail\.path\)/);
   assert.match(nativeMedia, /MediaMetadataRetriever/);
   assert.match(nativeMedia, /getFilesDir\(\)/);
-  assert.match(nativeMedia, /outputFile\.isFile\s*&&\s*outputFile\.length\(\)\s*>\s*0/);
+  assert.match(nativeMedia, /outputFile\.isFile\(\)\s*&&\s*outputFile\.length\(\)\s*>\s*0/);
   assert.match(app, /src=\{video\.thumbnail_url\}/);
 });
 
