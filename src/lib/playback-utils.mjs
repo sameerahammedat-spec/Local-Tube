@@ -68,7 +68,7 @@ export function normalizeProgressSample(positionSeconds, durationSeconds) {
 /** Prefer the saved title; retain numeric local filenames but avoid exposing numeric YouTube record IDs. */
 export function getDisplayVideoTitle(video = {}) {
   const title = String(video.title || '').trim();
-  if (title && (!/^\\d{6,}$/.test(title) || video.isLocal || video.file_path)) return title;
+  if (title && (!/^\d{6,}$/.test(title) || video.isLocal || video.file_path)) return title;
   const channel = String(video.channel_title || '').trim();
   if (channel) return channel;
   return video.isLocal || video.file_path ? 'Untitled local video' : 'YouTube video';
