@@ -490,7 +490,7 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-icon"><Clapperboard size={22} strokeWidth={2.2} /></div>
+          <div className="brand-icon"><Play size={22} fill="currentColor" strokeWidth={1.8} /></div>
           <div className="brand-wordmark">
             <strong>LOCAL<span>TUBE</span></strong>
             <small>YOUR PRIVATE STREAMING SPACE</small>
