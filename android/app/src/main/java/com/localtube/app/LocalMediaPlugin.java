@@ -149,11 +149,35 @@ public class LocalMediaPlugin extends Plugin {
             return;
         }
 
+        File thumbnailDirectory = new File(
+            getContext().getFilesDir(),
+            "LocalTube/thumbnails"
+        );
+
+        if (!thumbnailDirectory.exists() && !thumbnailDirectory.mkdirs()) {
+            call.reject("Could not create thumbnail storage.");
+            return;
+        }
+
+        String cacheKey = Integer.toHexString(
+            (source.getAbsolutePath() + ":" + source.length() + ":" + source.lastModified()).hashCode()
+        );
+        File outputFile = new File(thumbnailDirectory, cacheKey + ".jpg");
+
+        // Reuse the persisted poster on subsequent library refreshes.
+        if (outputFile.isFile() && outputFile.length() > 0) {
+            JSObject cached = new JSObject();
+            cached.put("path", outputFile.getAbsolutePath());
+            call.resolve(cached);
+            return;
+        }
+
         MediaMetadataRetriever retriever = new MediaMetadataRetriever();
         Bitmap frame = null;
 
         try {
             retriever.setDataSource(source.getAbsolutePath());
+
             try {
                 frame = retriever.getFrameAtTime(
                     1_000_000L,
@@ -171,43 +195,27 @@ public class LocalMediaPlugin extends Plugin {
                 throw new IOException("No video frame could be decoded.");
             }
 
-            File thumbnailDirectory = new File(
-                getContext().getFilesDir(),
-                "LocalTube/thumbnails"
+            int maxWidth = 640;
+            int maxHeight = 360;
+            float scale = Math.min(
+                1f,
+                Math.min(
+                    (float) maxWidth / frame.getWidth(),
+                    (float) maxHeight / frame.getHeight()
+                )
             );
 
-            if (!thumbnailDirectory.exists() && !thumbnailDirectory.mkdirs()) {
-                throw new IOException("Could not create thumbnail cache.");
-            }
+            int width = Math.max(1, Math.round(frame.getWidth() * scale));
+            int height = Math.max(1, Math.round(frame.getHeight() * scale));
+            Bitmap scaled = Bitmap.createScaledBitmap(frame, width, height, true);
 
-            String cacheKey = Integer.toHexString(
-                (source.getAbsolutePath() + ":" + source.length() + ":" + source.lastModified()).hashCode()
-            );
-            File outputFile = new File(thumbnailDirectory, cacheKey + ".jpg");
-
-            if (!outputFile.isFile() || outputFile.length() == 0) {
-                int maxWidth = 640;
-                int maxHeight = 360;
-                float scale = Math.min(
-                    1f,
-                    Math.min(
-                        (float) maxWidth / frame.getWidth(),
-                        (float) maxHeight / frame.getHeight()
-                    )
-                );
-
-                int width = Math.max(1, Math.round(frame.getWidth() * scale));
-                int height = Math.max(1, Math.round(frame.getHeight() * scale));
-                Bitmap scaled = Bitmap.createScaledBitmap(frame, width, height, true);
-
-                try (FileOutputStream output = new FileOutputStream(outputFile)) {
-                    if (!scaled.compress(Bitmap.CompressFormat.JPEG, 84, output)) {
-                        throw new IOException("Could not encode video thumbnail.");
-                    }
-                    output.flush();
+            try (FileOutputStream output = new FileOutputStream(outputFile)) {
+                if (!scaled.compress(Bitmap.CompressFormat.JPEG, 84, output)) {
+                    throw new IOException("Could not encode video thumbnail.");
                 }
-
-                if (scaled != frame) {
+                output.flush();
+            } finally {
+                if (scaled != frame && !scaled.isRecycled()) {
                     scaled.recycle();
                 }
             }
@@ -217,6 +225,9 @@ public class LocalMediaPlugin extends Plugin {
             call.resolve(response);
 
         } catch (Exception error) {
+            if (outputFile.exists()) {
+                outputFile.delete();
+            }
             call.reject(
                 "Could not generate video thumbnail: " + error.getMessage(),
                 error
