@@ -77,10 +77,11 @@ test('rejects invalid progress samples and clamps valid progress', () => {
   assert.deepEqual(normalizeProgressSample(120, 100), { positionSeconds: 100, durationSeconds: 100, completed: true });
 });
 
-test('replaces numeric-only imported titles with human-readable labels', () => {
+test('preserves numeric local filenames and falls back for numeric catalogue titles', () => {
   assert.equal(getDisplayVideoTitle({ title: '1000118597', isLocal: true }), '1000118597');
   assert.equal(getDisplayVideoTitle({ title: '1000118597', channel_title: 'MercifulServant' }), 'MercifulServant');
   assert.equal(getDisplayVideoTitle({ title: 'A meaningful title' }), 'A meaningful title');
+  assert.equal(getDisplayVideoTitle({ isLocal: true }), 'Untitled local video');
 });
 
 test('recognizes Android picker dismissal without treating it as an error', () => {
