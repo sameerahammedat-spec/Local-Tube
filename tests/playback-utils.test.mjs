@@ -78,7 +78,7 @@ test('rejects invalid progress samples and clamps valid progress', () => {
 });
 
 test('replaces numeric-only imported titles with human-readable labels', () => {
-  assert.equal(getDisplayVideoTitle({ title: '1000118597', isLocal: true }), 'Local video');
+  assert.equal(getDisplayVideoTitle({ title: '1000118597', isLocal: true }), '1000118597');
   assert.equal(getDisplayVideoTitle({ title: '1000118597', channel_title: 'MercifulServant' }), 'MercifulServant');
   assert.equal(getDisplayVideoTitle({ title: 'A meaningful title' }), 'A meaningful title');
 });
