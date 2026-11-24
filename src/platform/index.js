@@ -178,6 +178,32 @@ async function enrichVideos(rows) {
         });
 
         video.fileExists = Boolean(result?.exists);
+
+        // Older imports do not have a poster yet. Generate one on demand
+        // and persist its WebView-safe URL so later library loads are instant.
+        if (video.fileExists && !video.thumbnail_url) {
+          try {
+            const thumbnail = await LocalMedia.createThumbnail({
+              path: video.file_path
+            });
+
+            if (thumbnail?.path) {
+              const thumbnailUrl = Capacitor.convertFileSrc(thumbnail.path);
+              video.thumbnail_url = thumbnailUrl;
+
+              await (await getAndroidDb()).run(
+                'UPDATE videos SET thumbnail_url = ? WHERE id = ?',
+                [thumbnailUrl, Number(video.id)]
+              );
+            }
+          } catch (thumbnailError) {
+            console.warn(
+              '[LocalTube] Thumbnail generation skipped:',
+              video.title,
+              thumbnailError
+            );
+          }
+        }
       } catch (error) {
         console.warn(
           '[LocalTube] Could not check file:',
