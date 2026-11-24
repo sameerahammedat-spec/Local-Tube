@@ -1157,3 +1157,190 @@ button{-webkit-tap-highlight-color:transparent}
 }
 .topbar-settings:hover{background:#f2f6fd;color:#2563eb;border-color:#cbdcf6}
 @media(max-width:700px){.topbar-settings{width:41px;height:42px;flex-basis:41px}}
+
+
+/* LocalTube mobile scroll ownership: document is the only vertical scroller. */
+@media (max-width: 700px) {
+  html, body, #root {
+    width: 100%;
+    min-width: 0;
+    height: auto !important;
+    min-height: 100%;
+    overflow-x: clip !important;
+    overflow-y: visible !important;
+  }
+  body {
+    min-height: 100dvh;
+    overflow-y: auto !important;
+    overscroll-behavior-y: auto;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+  #root, .app-shell {
+    min-height: 100dvh;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  .app-shell {
+    padding-bottom: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+  .main-area {
+    display: flex !important;
+    flex: 1 0 auto !important;
+    flex-direction: column !important;
+    width: 100%;
+    min-width: 0;
+    min-height: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+    padding: 0 0 calc(82px + env(safe-area-inset-bottom)) !important;
+    touch-action: pan-y;
+  }
+  .main-area > .topbar,
+  .main-area > .message,
+  .main-area > .library-section,
+  .main-area > .channel-page,
+  .main-area > .detail-panel,
+  .main-area > .statusbar {
+    position: relative;
+    inset: auto;
+    grid-column: auto !important;
+    grid-row: auto !important;
+    flex: 0 0 auto !important;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+  .main-area > .library-section,
+  .main-area > .channel-page {
+    padding: 18px 16px 30px;
+    overscroll-behavior: auto;
+    -webkit-overflow-scrolling: auto;
+    touch-action: pan-y;
+  }
+  .main-area > .detail-panel { display: none; }
+  .main-area > .statusbar { display: none; }
+  .topbar { position: sticky !important; top: 0; z-index: 45; }
+  .mobile-home-page .video-grid {
+    display: flex !important;
+    width: calc(100% + 16px);
+    max-width: calc(100% + 16px);
+    margin-right: -16px;
+    padding: 4px 16px 18px 2px;
+    gap: 14px;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x pan-y;
+    overscroll-behavior-x: contain;
+  }
+  .mobile-home-page .video-card {
+    flex: 0 0 min(76vw, 310px);
+    min-width: 0;
+    scroll-snap-align: start;
+  }
+  .video-grid:not(.mobile-home-page .video-grid) {
+    touch-action: pan-y;
+  }
+  .sidebar { z-index: 100; }
+}
+
+/* A more confident editorial type scale and tactile, consistent icon system. */
+:root {
+  font-family: Inter, "Roboto", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-optical-sizing: auto;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+button, input, textarea { font-family: inherit; }
+.nav-item svg, .topbar-settings svg, .icon-btn svg,
+.primary-btn svg, .secondary-btn svg, .source-chip svg {
+  flex-shrink: 0;
+}
+.nav-item svg { stroke-width: 2.15; }
+.section-head h2 { font-size: clamp(17px, 1.35vw, 21px); letter-spacing: -.45px; }
+.section-head p { font-size: 12px; line-height: 1.55; }
+.video-card { border-radius: 15px; }
+.video-card .thumb {
+  height: auto;
+  aspect-ratio: 16 / 9;
+  border-radius: 13px;
+  background: #e6ebf3;
+}
+.video-card .thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.video-card-copy { padding: 11px 3px 12px; gap: 5px; }
+.video-card-copy strong {
+  font-size: 13px;
+  line-height: 1.42;
+  letter-spacing: -.12px;
+  color: #182338;
+}
+.video-card-copy span {
+  font-size: 11px;
+  line-height: 1.35;
+  color: #728097;
+}
+.source-chip.local {
+  background: rgba(16,43,85,.88);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,.22);
+  border-radius: 6px;
+  padding: 5px 7px;
+  font-size: 8px;
+  letter-spacing: .65px;
+}
+.source-chip.online {
+  background: rgba(225,29,72,.92);
+  color: #fff;
+  border-radius: 6px;
+}
+.card-play-icon { background: linear-gradient(0deg,rgba(7,18,37,.38),transparent 70%); }
+.card-play-icon svg {
+  width: 48px;
+  height: 48px;
+  padding: 13px;
+  background: #e11d48;
+}
+.thumb-placeholder {
+  background: linear-gradient(135deg,#e5edfb,#cddcf3);
+  color: #28558d;
+}
+.thumb-placeholder svg { width: 34px; height: 34px; stroke-width: 1.8; }
+.mobile-hero { border-radius: 20px; }
+.mobile-hero h2 { letter-spacing: -1.25px; }
+.primary-btn { border-radius: 11px; font-weight: 700; }
+.secondary-btn, .outline-btn { border-radius: 11px; }
+.topbar-settings { border-radius: 12px; }
+.nav-item { transition: color .18s ease, background .18s ease, transform .18s ease; }
+.nav-item:active, .video-card:active, .primary-btn:active { transform: scale(.985); }
+@media (max-width: 700px) {
+  .mobile-home-page .video-card-copy strong { font-size: 13px; }
+  .mobile-home-page .video-card-copy span { font-size: 10px; }
+  .video-grid:not(.mobile-home-page .video-grid) {
+    grid-template-columns: repeat(2, minmax(0,1fr));
+    gap: 15px 11px;
+  }
+  .video-grid:not(.mobile-home-page .video-grid) .thumb { aspect-ratio: 16 / 10; }
+  .section-head h2 { font-size: 19px; }
+  .section-head p { font-size: 12px; }
+  .topbar h1 { font-size: 20px; font-weight: 750; letter-spacing: -.55px; }
+  .video-card-copy { padding: 9px 2px 12px; }
+  .video-card-copy strong { font-size: 12px; }
+  .video-card-copy span { font-size: 10px; }
+  .sidebar > .nav-item { flex-basis: 88px; min-width: 88px; font-size: 10px; }
+  .sidebar > .nav-item svg { width: 22px; height: 22px; stroke-width: 2.1; }
+  .mobile-hero { min-height: 285px; }
+}
