@@ -65,13 +65,13 @@ export function normalizeProgressSample(positionSeconds, durationSeconds) {
 }
 
 
-/** Return a human-readable title instead of exposing numeric file/record IDs. */
+/** Keep the imported filename visible; never replace a real local filename with a generic label. */
 export function getDisplayVideoTitle(video = {}) {
   const title = String(video.title || '').trim();
-  if (title && !/^\d{6,}$/.test(title)) return title;
+  if (title) return title;
   const channel = String(video.channel_title || '').trim();
   if (channel) return channel;
-  return video.isLocal || video.file_path ? 'Local video' : 'YouTube video';
+  return video.isLocal || video.file_path ? 'Untitled local video' : 'YouTube video';
 }
 
 /** Native Android file pickers report user dismissal as a rejected promise on some versions. */
