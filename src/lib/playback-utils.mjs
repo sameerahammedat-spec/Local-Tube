@@ -78,6 +78,6 @@ export function getDisplayVideoTitle(video = {}) {
 export function isUserCancelledPicker(error) {
   const message = String(error?.message || error || '').toLowerCase();
   const code = String(error?.code || '').toLowerCase();
-  return /pickfiles?\s+cancelled?|cancelled? by user|user cancelled|user canceled|operation cancelled|operation canceled/.test(message) ||
-    /cancelled|canceled/.test(code);
+  return /pickfiles?\s+cancel(?:l)?ed|cancel(?:l)?ed by user|user cancel(?:l)?ed|operation cancel(?:l)?ed/.test(message) ||
+    /cancel(?:l)?ed/.test(code);
 }
