@@ -1109,8 +1109,9 @@ function VideoGrid({ videos, selected, onSelect, onPlay }) {
             {video.thumbnail_url ? (
               <img
                 src={video.thumbnail_url}
-                alt=""
+                alt={getDisplayVideoTitle(video)}
                 loading="lazy"
+                decoding="async"
               />
             ) : (
               <div className="thumb-placeholder">
@@ -1123,12 +1124,18 @@ function VideoGrid({ videos, selected, onSelect, onPlay }) {
                 video.isLocal ? 'local' : 'online'
               }`}
             >
-              {video.isLocal && video.fileExists === false ? 'FILE MISSING' : video.isLocal ? 'LOCAL FILE' : 'YOUTUBE'}
+              {video.isLocal && video.fileExists === false ? 'FILE MISSING' : video.isLocal ? 'ON DEVICE' : 'YOUTUBE'}
             </span>
 
-            <span className="card-play-icon">
+            <span className="card-play-icon" aria-hidden="true">
               <Play size={25} fill="currentColor" />
             </span>
+            {Number(video.durationSeconds || video.duration_seconds) > 0 && (
+              <span className="video-duration">
+                {Math.floor(Number(video.durationSeconds || video.duration_seconds) / 60)}:
+                {String(Math.floor(Number(video.durationSeconds || video.duration_seconds) % 60)).padStart(2, '0')}
+              </span>
+            )}
           </div>
 
           <div className="video-card-copy">
