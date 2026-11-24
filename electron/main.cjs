@@ -3,6 +3,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const Database = require('better-sqlite3');
+const { normalizeProgressPayload, getSafeResumePosition } = require('./playback-progress.cjs');
 
 const dataDir = path.join(app.getPath('userData'), 'LocalTube');
 
@@ -280,19 +281,16 @@ ipcMain.handle('history:list', (_event, limit = 20) => {
 // Save playback progress reported by the player window.
 ipcMain.on('player:progress', (_event, payload = {}) => {
   try {
-    const videoId = Number(payload.videoId);
-    const position = Math.max(0, Number(payload.positionSeconds) || 0);
-    const duration = Math.max(0, Number(payload.durationSeconds) || 0);
+    const progress = normalizeProgressPayload(payload);
+    if (!progress) return;
 
-    if (!Number.isInteger(videoId) || videoId <= 0) return;
+    const { videoId, positionSeconds: position, durationSeconds: duration, completed } = progress;
 
     const exists = getDb().prepare(
       'SELECT id FROM videos WHERE id = ?'
     ).get(videoId);
 
     if (!exists) return;
-
-    const completed = duration > 0 && position / duration >= 0.9 ? 1 : 0;
 
     getDb().prepare(`
       INSERT INTO watch_history(
@@ -342,27 +340,6 @@ positionSeconds
 console.error('[LocalTube] Timestamp event failed:', error);
 }
 });
-// Receive playback timestamp from the player window.
-ipcMain.on('player:time', (_event, payload = {}) => {
-  const videoId = Number(payload.videoId);
-
-  const position = Math.max(
-    0,
-    Number(payload.positionSeconds) || 0
-  );
-
-  if (!Number.isInteger(videoId) || videoId <= 0) {
-    return;
-  }
-
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('player:time', {
-      videoId,
-      positionSeconds: position
-    });
-  }
-});
-
 // List imported YouTube channels.
 ipcMain.handle('channels:list', () => {
   return listChannels();
@@ -389,6 +366,8 @@ ipcMain.handle('library:importFiles', async () => {
   if (result.canceled || !result.filePaths?.length) {
     return {
       addedCount: 0,
+      skippedCount: 0,
+      errors: [],
       videos: listVideos({ type: 'local' })
     };
   }
@@ -405,13 +384,16 @@ ipcMain.handle('library:importFiles', async () => {
   `);
 
   const transaction = database.transaction((selectedPaths) => {
-    let added = 0;
+    let addedCount = 0;
+    let skippedCount = 0;
 
     for (const selectedPath of selectedPaths) {
       const filePath = path.resolve(selectedPath);
 
-      if (!fs.existsSync(filePath)) continue;
-      if (findExisting.get(filePath)) continue;
+      if (!fs.existsSync(filePath) || findExisting.get(filePath)) {
+        skippedCount++;
+        continue;
+      }
 
       const title = path.basename(
         filePath,
@@ -419,16 +401,17 @@ ipcMain.handle('library:importFiles', async () => {
       ).replace(/[._-]+/g, ' ');
 
       insert.run(title, filePath);
-      added++;
+      addedCount++;
     }
 
-    return added;
+    return { addedCount, skippedCount };
   });
 
-  const addedCount = transaction(result.filePaths);
+  const summary = transaction(result.filePaths);
 
   return {
-    addedCount,
+    ...summary,
+    errors: [],
     videos: listVideos({ type: 'local' })
   };
 });
@@ -458,15 +441,16 @@ ipcMain.handle('library:addYouTubeItems', (_event, items) => {
     let added = 0;
 
     for (const item of rows) {
-      if (!item?.youtubeId) continue;
-      if (findExisting.get(String(item.youtubeId))) continue;
+      const youtubeId = String(item?.youtubeId || '').trim();
+      if (!/^[a-zA-Z0-9_-]{11}$/.test(youtubeId)) continue;
+      if (findExisting.get(youtubeId)) continue;
 
       insert.run({
         title: String(item.title || 'Untitled').slice(0, 500),
         channelTitle: String(item.channelTitle || '').slice(0, 300),
         channelId: String(item.channelId || ''),
-        youtubeId: String(item.youtubeId),
-        youtubeUrl: String(item.youtubeUrl || ''),
+        youtubeId,
+        youtubeUrl: `https://www.youtube.com/watch?v=${youtubeId}`,
         thumbnailUrl: String(item.thumbnailUrl || ''),
         description: String(item.description || '').slice(0, 4000)
       });
@@ -782,8 +766,21 @@ ipcMain.handle('notes:loadPath', (_event, videoId) => {
 
 // Read notes file.
 ipcMain.handle('notes:read', (_event, filePath) => {
+  const requestedPath = String(filePath || '');
+  if (!requestedPath) return '';
+
+  // Only read note files previously selected through LocalTube's Save dialog.
+  // The renderer cannot use this bridge to read arbitrary files on the PC.
+  const allowed = getDb().prepare(
+    "SELECT value FROM settings WHERE key LIKE 'notes:%'"
+  ).all().some(row => path.resolve(row.value) === path.resolve(requestedPath));
+
+  if (!allowed) {
+    throw new Error('This file is not a saved LocalTube notes file.');
+  }
+
   try {
-    return fs.readFileSync(String(filePath), 'utf8');
+    return fs.readFileSync(requestedPath, 'utf8');
   } catch {
     return '';
   }
@@ -804,17 +801,22 @@ ipcMain.handle('notes:autoSave', (_event, payload = {}) => {
     'SELECT value FROM settings WHERE key = ?'
   ).get(`notes:${videoId}`)?.value || '';
 
-  // Update the existing TXT file if it is available.
-  if (savedPath && fs.existsSync(path.dirname(savedPath))) {
-    fs.writeFileSync(savedPath, content, 'utf8');
-  }
-
-  // Always keep an autosaved copy in SQLite.
+  // Persist the recovery draft first so an unavailable or read-only TXT
+  // destination can never prevent the user's latest notes from being saved.
   database.prepare(`
     INSERT INTO settings(key, value)
     VALUES(?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `).run(`notes-draft:${videoId}`, content);
+
+  // Keep the exported TXT file in sync when its destination is still writable.
+  if (savedPath && fs.existsSync(path.dirname(savedPath))) {
+    try {
+      fs.writeFileSync(savedPath, content, 'utf8');
+    } catch (error) {
+      console.warn('[LocalTube] Could not update exported notes file:', error);
+    }
+  }
 
   return {
     saved: true,
@@ -891,7 +893,8 @@ ipcMain.handle('settings:save', (_event, settings = {}) => {
 
   const transaction = getDb().transaction(() => {
     for (const key of allowedSettings) {
-      if (Object.prototype.hasOwnProperty.call(settings, key)) {
+      if (Object.prototype.hasOwnProperty.call(settings, key) &&
+          typeof settings[key] === 'boolean') {
         save.run(
           `focus:${key}`,
           JSON.stringify(settings[key])
@@ -937,10 +940,7 @@ ipcMain.handle('player:open', async (_event, videoId) => {
     WHERE video_id = ?
   `).get(Number(videoId));
 
-  const resumeSeconds =
-    savedProgress && !savedProgress.completed
-      ? Math.max(0, Number(savedProgress.position_seconds) || 0)
-      : 0;
+  const resumeSeconds = getSafeResumePosition(savedProgress);
 
   // Determine the playback source before creating the player window.
   let playerType;

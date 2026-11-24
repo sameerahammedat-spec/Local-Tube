@@ -3,6 +3,8 @@ package com.localtube.app;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 
 import androidx.activity.result.ActivityResult;
@@ -128,6 +130,116 @@ public class LocalMediaPlugin extends Plugin {
                 "Video import failed: " + error.getMessage(),
                 error
             );
+        }
+    }
+
+
+    @PluginMethod
+    public void createThumbnail(PluginCall call) {
+        String sourcePath = call.getString("path");
+
+        if (sourcePath == null || sourcePath.trim().isEmpty()) {
+            call.reject("A local video path is required.");
+            return;
+        }
+
+        File source = new File(sourcePath);
+        if (!source.isFile() || !source.canRead()) {
+            call.reject("The local video file is not readable.");
+            return;
+        }
+
+        File thumbnailDirectory = new File(
+            getContext().getFilesDir(),
+            "LocalTube/thumbnails"
+        );
+
+        if (!thumbnailDirectory.exists() && !thumbnailDirectory.mkdirs()) {
+            call.reject("Could not create thumbnail storage.");
+            return;
+        }
+
+        String cacheKey = Integer.toHexString(
+            (source.getAbsolutePath() + ":" + source.length() + ":" + source.lastModified()).hashCode()
+        );
+        File outputFile = new File(thumbnailDirectory, cacheKey + ".jpg");
+
+        // Reuse the persisted poster on subsequent library refreshes.
+        if (outputFile.isFile() && outputFile.length() > 0) {
+            JSObject cached = new JSObject();
+            cached.put("path", outputFile.getAbsolutePath());
+            call.resolve(cached);
+            return;
+        }
+
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        Bitmap frame = null;
+
+        try {
+            retriever.setDataSource(source.getAbsolutePath());
+
+            try {
+                frame = retriever.getFrameAtTime(
+                    1_000_000L,
+                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+                );
+            } catch (Exception ignored) {
+                // Some containers do not support seeking to a one-second frame.
+            }
+
+            if (frame == null) {
+                frame = retriever.getFrameAtTime();
+            }
+
+            if (frame == null) {
+                throw new IOException("No video frame could be decoded.");
+            }
+
+            int maxWidth = 640;
+            int maxHeight = 360;
+            float scale = Math.min(
+                1f,
+                Math.min(
+                    (float) maxWidth / frame.getWidth(),
+                    (float) maxHeight / frame.getHeight()
+                )
+            );
+
+            int width = Math.max(1, Math.round(frame.getWidth() * scale));
+            int height = Math.max(1, Math.round(frame.getHeight() * scale));
+            Bitmap scaled = Bitmap.createScaledBitmap(frame, width, height, true);
+
+            try (FileOutputStream output = new FileOutputStream(outputFile)) {
+                if (!scaled.compress(Bitmap.CompressFormat.JPEG, 84, output)) {
+                    throw new IOException("Could not encode video thumbnail.");
+                }
+                output.flush();
+            } finally {
+                if (scaled != frame && !scaled.isRecycled()) {
+                    scaled.recycle();
+                }
+            }
+
+            JSObject response = new JSObject();
+            response.put("path", outputFile.getAbsolutePath());
+            call.resolve(response);
+
+        } catch (Exception error) {
+            if (outputFile.exists()) {
+                outputFile.delete();
+            }
+            call.reject(
+                "Could not generate video thumbnail: " + error.getMessage(),
+                error
+            );
+        } finally {
+            try {
+                retriever.release();
+            } catch (Exception ignored) {
+            }
+            if (frame != null && !frame.isRecycled()) {
+                frame.recycle();
+            }
         }
     }
 

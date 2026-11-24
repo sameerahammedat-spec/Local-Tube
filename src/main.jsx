@@ -14,11 +14,21 @@ import {
   Youtube,
   X,
   Download,
-  Check
+  Check,
+  Clapperboard,
+  HardDrive,
+  Sparkles,
+  ChevronRight,
+  Shield,
+  LibraryBig,
+  PanelRight,
+  Import,
+  Tv
 } from 'lucide-react';
 import './style.css';
 
 import { createPlatformApi } from './platform/index.js';
+import { appendTimestamp, normalizeFocusSettings, filterVideosForFocus, shouldShowRecommendations, getDisplayVideoTitle, isUserCancelledPicker } from './lib/playback-utils.mjs';
 
 const api = createPlatformApi();
 
@@ -41,9 +51,13 @@ function App() {
 
   const [notes, setNotes] = useState('');
   const [notesPath, setNotesPath] = useState('');
+  const [notesReadyForVideo, setNotesReadyForVideo] = useState(null);
   const [tags, setTags] = useState('');
   const [message, setMessage] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+  const [playbackTime, setPlaybackTime] = useState(0);
+  const [focusSettings, setFocusSettings] = useState({ enabled: true, hideYouTube: true, hideRecommendations: true, hideShorts: true });
+  const [settingsReady, setSettingsReady] = useState(false);
 
   // Open a video in the dedicated LocalTube player window.
   async function openVideo(video) {
@@ -131,10 +145,9 @@ function App() {
           console.warn('[LocalTube] Recommendations unavailable:', error);
         }
       }
-    } else if (page === 'channels') {
+    } else if (page === 'channels' || page === 'channel-import') {
       await loadChannels();
-
-      if (activeChannel) {
+      if (page === 'channels' && activeChannel) {
         await loadChannelVideos(activeChannel);
       } else {
         setVideos([]);
@@ -157,9 +170,80 @@ function App() {
     });
   }, [page, query, bookmarksOnly, activeChannel]);
 
-  // Load notes and tags whenever the selected video changes.
+  // Restore distraction controls. Desktop persists these in SQLite;
+  // Android/browser fallback uses local preferences without changing the library DB.
   useEffect(() => {
     let alive = true;
+    async function restoreFocusSettings() {
+      try {
+        let saved = {};
+        if (typeof api.getFocusSettings === 'function') {
+          saved = await api.getFocusSettings();
+        } else {
+          try { saved = JSON.parse(localStorage.getItem('lt_focus_settings') || '{}'); } catch { saved = {}; }
+        }
+        if (alive) {
+          setFocusSettings(normalizeFocusSettings({ ...focusSettings, ...saved }));
+          setSettingsReady(true);
+        }
+      } catch (error) {
+        console.warn('[LocalTube] Focus settings restore failed:', error);
+        if (alive) setSettingsReady(true);
+      }
+    }
+    restoreFocusSettings();
+    return () => { alive = false; };
+  }, []);
+
+  async function updateFocusSetting(key, value) {
+    const next = { ...focusSettings, [key]: value };
+    setFocusSettings(next);
+    try {
+      if (typeof api.saveFocusSettings === 'function') {
+        await api.saveFocusSettings({ [key]: value });
+      } else {
+        localStorage.setItem('lt_focus_settings', JSON.stringify(next));
+      }
+      setMessage('Focus preferences saved.');
+    } catch (error) {
+      setMessage(`Could not save focus preferences: ${error.message || error}`);
+    }
+  }
+
+  // Receive playback timestamps from the separate Electron player window.
+  useEffect(() => {
+    if (!selected || typeof api.onPlayerTime !== 'function') return undefined;
+
+    const unsubscribe = api.onPlayerTime(payload => {
+      if (Number(payload?.videoId) === Number(selected.id)) {
+        setPlaybackTime(Math.max(0, Number(payload.positionSeconds) || 0));
+      }
+    });
+
+    return typeof unsubscribe === 'function' ? unsubscribe : undefined;
+  }, [selected?.id]);
+
+  // Refresh Continue Watching when the separate player closes or saves history.
+  useEffect(() => {
+    if (typeof api.onHistoryUpdated !== 'function') return undefined;
+
+    const unsubscribe = api.onHistoryUpdated(() => {
+      if (typeof api.getHistory === 'function') {
+        api.getHistory(20).then(setHistory).catch(error => {
+          console.warn('[LocalTube] History refresh failed:', error);
+        });
+      }
+    });
+
+    return typeof unsubscribe === 'function' ? unsubscribe : undefined;
+  }, []);
+
+  // Load notes and tags whenever the selected video changes.
+  // Mark notes as ready only after the correct video's content has loaded;
+  // this prevents the previous video's text being autosaved to a new video.
+  useEffect(() => {
+    let alive = true;
+    setNotesReadyForVideo(null);
 
     async function loadSelectedDetails() {
       if (!selected) {
@@ -175,14 +259,18 @@ function App() {
 
         setNotesPath(path || '');
 
-        const content = path
-          ? await api.readNotes(path)
-          : '';
+        let content = '';
+        if (typeof api.loadNotesDraft === 'function') {
+          content = await api.loadNotesDraft(selected.id);
+        } else if (path) {
+          content = await api.readNotes(path);
+        }
 
         if (!alive) return;
 
         setNotes(content || '');
         setTags(selected.tags || '');
+        setNotesReadyForVideo(selected.id);
       } catch (error) {
         if (alive) {
           console.error('[LocalTube] Notes loading failed:', error);
@@ -198,12 +286,37 @@ function App() {
     };
   }, [selected?.id]);
 
+  // Automatically persist edits after a short pause. Desktop writes its
+  // recovery draft and any existing TXT file; Android writes to SQLite.
+  useEffect(() => {
+    if (!selected || notesReadyForVideo !== selected.id) return undefined;
+
+    const videoId = selected.id;
+    const title = selected.title;
+    const content = notes;
+
+    const timer = setTimeout(async () => {
+      try {
+        await persistNotesDraft(videoId, title, content);
+      } catch (error) {
+        console.error('[LocalTube] Notes autosave failed:', error);
+        setMessage(`Notes autosave failed: ${error.message || error}`);
+      }
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, [selected?.id, selected?.title, notes, notesReadyForVideo]);
+
   async function importLocalFiles() {
     try {
       setMessage('Opening video file picker...');
 
       const result = await api.importFiles();
 
+      if (result?.cancelled || result?.canceled) {
+        setMessage('');
+        return;
+      }
       if (!result || typeof result.addedCount !== 'number') {
         throw new Error('Unexpected response from local import service.');
       }
@@ -220,12 +333,16 @@ function App() {
 
       setVideos(importedVideos);
 
-      setMessage(
-        result.addedCount > 0
-          ? `Successfully imported ${result.addedCount} new video(s).`
-          : 'No new videos imported. The files may already be in your library.'
-      );
+      const importSummary = `${result.addedCount} added, ${Number(result.skippedCount) || 0} skipped.`;
+      const importErrors = Array.isArray(result.errors) && result.errors.length
+        ? ` ${result.errors.length} file(s) failed: ${result.errors.slice(0, 3).join(' | ')}`
+        : '';
+      setMessage(`Import finished: ${importSummary}${importErrors}`);
     } catch (error) {
+      if (isUserCancelledPicker(error)) {
+        setMessage('');
+        return;
+      }
       console.error('[LocalTube] Local import failed:', error);
       setMessage(`Import failed: ${error.message || error}`);
     }
@@ -310,6 +427,7 @@ function App() {
         id: selected.id,
         tags
       });
+      setSelected(current => current ? { ...current, tags } : current);
 
       setMessage('Tags saved successfully.');
       await refresh();
@@ -318,19 +436,26 @@ function App() {
     }
   }
 
+  async function persistNotesDraft(videoId, title, content) {
+    const payload = { videoId, title, content };
+    if (typeof api.autoSaveNotes === 'function') {
+      return api.autoSaveNotes(payload);
+    }
+    return api.saveNotes(payload);
+  }
+
   async function saveNotes() {
     if (!selected) return;
 
     try {
-      const result = await api.saveNotes({
-        videoId: selected.id,
-        title: selected.title,
-        content: notes
-      });
+      const exportPayload = { videoId: selected.id, title: selected.title, content: notes };
+      const result = typeof api.exportNotes === 'function'
+        ? await api.exportNotes(exportPayload)
+        : await api.saveNotes(exportPayload);
 
       if (!result.canceled) {
-        setNotesPath(result.filePath);
-        setMessage('Notes saved successfully.');
+        setNotesPath(result.fileName || result.filePath);
+        setMessage('Notes exported successfully.');
       }
     } catch (error) {
       setMessage(`Could not save notes: ${error.message}`);
@@ -338,16 +463,23 @@ function App() {
   }
 
   function addTimestamp() {
-    // The player is in a separate window, so its current playback
-    // position is not available in this renderer yet.
-    setMessage(
-      'Timestamp capture from the separate player will be connected in a later update.'
-    );
+    if (!selected) return;
+
+    const totalSeconds = Math.max(0, Math.floor(playbackTime));
+    const timestamp = appendTimestamp('', totalSeconds).trim();
+    setNotes(current => appendTimestamp(current, totalSeconds));
+    setMessage(`Timestamp ${timestamp} inserted.`);
   }
 
   const selectedChannel = channels.find(
     channel => channel.channelId === activeChannel
   );
+
+  const visibleVideos = filterVideosForFocus(videos, focusSettings);
+  const visibleHistory = filterVideosForFocus(history, focusSettings);
+  const visibleRecommendations = filterVideosForFocus(recommendations, focusSettings);
+  const showRecommendations = shouldShowRecommendations(focusSettings);
+  const featuredVideo = (showRecommendations ? visibleRecommendations[0] : null) || visibleHistory[0] || visibleVideos[0] || null;
 
   const localCount = useMemo(
     () => videos.filter(video => video.isLocal).length,
@@ -358,16 +490,14 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-icon">
-            <Play size={19} fill="currentColor" />
-          </div>
-          <div>
-            <strong>LocalTube</strong>
-            <small>YOUR PERSONAL LIBRARY</small>
+          <div className="brand-icon"><Play size={22} fill="currentColor" strokeWidth={1.8} /></div>
+          <div className="brand-wordmark">
+            <strong>LOCAL<span>TUBE</span></strong>
+            <small>YOUR PRIVATE STREAMING SPACE</small>
           </div>
         </div>
 
-        <div className="nav-label">WORKSPACE</div>
+        <div className="nav-label">DISCOVER</div>
         <button
           className={`nav-item ${page === 'home' ? 'active' : ''}`}
           onClick={() => {
@@ -377,7 +507,7 @@ function App() {
             setBookmarksOnly(false);
           }}
         >
-          <Home size={18} />
+          <Sparkles size={18} />
           Home
         </button>
 
@@ -390,8 +520,20 @@ function App() {
             setBookmarksOnly(false);
           }}
         >
-          <Home size={18} />
-          Local videos
+          <LibraryBig size={18} />
+          My Library
+        </button>
+
+        <button
+          className={`nav-item ${page === 'channel-import' ? 'active' : ''}`}
+          onClick={() => {
+            setPage('channel-import');
+            setSelected(null);
+            setBookmarksOnly(false);
+          }}
+        >
+          <Import size={18} />
+          Import Channel
         </button>
 
         <button
@@ -400,10 +542,11 @@ function App() {
             setPage('channels');
             setSelected(null);
             setBookmarksOnly(false);
+            setActiveChannel('');
           }}
         >
-          <Youtube size={18} />
-          YouTube channels
+          <Tv size={18} />
+          Imported Channels
           <span>{channels.length}</span>
         </button>
 
@@ -416,7 +559,7 @@ function App() {
           }}
         >
           <Bookmark size={18} />
-          Bookmarks
+          My List
         </button>
 
         <button
@@ -429,16 +572,14 @@ function App() {
           }}
         >
           <ShieldCheck size={18} />
-          Focus
+          Focus Space
         </button>
         <div className="sidebar-bottom">
           <div className="privacy-card">
-            <ShieldCheck size={20} />
-            <strong>Local-first by design</strong>
-            <p>
-              Your local video library and notes stay on this laptop.
-              YouTube catalogue entries are stored separately.
-            </p>
+            <div className="privacy-card-icon"><Shield size={17} /></div>
+            <strong>Your space. Your rules.</strong>
+            <p>Private by design. Your videos and notes stay under your control.</p>
+            <span className="privacy-status"><i /> LOCAL STORAGE ACTIVE</span>
           </div>
 
           <button
@@ -454,17 +595,13 @@ function App() {
       <main className="main-area">
         <header className="topbar">
           <div>
-            <div className="eyebrow">PERSONAL VIDEO WORKSPACE</div>
+            <div className="eyebrow">YOUR PRIVATE ENTERTAINMENT SPACE</div>
             <h1>
-              {page === 'home'
-                ? 'Your personal video space'
-                : page === 'focus'
-                  ? 'Focus mode'
-                  : page === 'local'
-                    ? 'Local videos'
-                    : page === 'channels'
-                      ? 'YouTube channels'
-                      : 'Bookmarks'}
+              {page === 'home' ? 'Home' :
+                page === 'focus' ? 'Focus space' :
+                page === 'local' ? 'My videos' :
+                page === 'channel-import' ? 'Import a channel' :
+                page === 'channels' ? 'Imported channels' : 'My list'}
             </h1>
           </div>
 
@@ -485,13 +622,15 @@ function App() {
               )}
             </div>
 
-            <button
-              className="primary-btn"
-              onClick={importLocalFiles}
-            >
-              <Plus size={17} />
-              Import local files
-            </button>
+            <div className="topbar-right">
+              <div className="privacy-pill"><ShieldCheck size={14} /> PRIVATE LIBRARY</div>
+              <button className="topbar-settings" onClick={() => setShowSettings(true)} aria-label="Open settings" title="Settings">
+                <Settings size={17} />
+              </button>
+              <button className="primary-btn" onClick={importLocalFiles}>
+                <Plus size={17} /> Import videos
+              </button>
+            </div>
           </div>
         </header>
 
@@ -506,58 +645,86 @@ function App() {
 
         {page === 'home' && (
           <section className="library-section mobile-home-page">
-            <div className="mobile-hero">
-              <div className="mobile-hero-copy">
-                <span className="eyebrow">YOUR PERSONAL VIDEO SPACE</span>
-                <h2>Less scrolling.<br />More meaningful watching.</h2>
-                <p>Your own library, available whenever you need it.</p>
-                <button className="primary-btn" onClick={importLocalFiles}>
-                  <Plus size={17} /> Add videos
-                </button>
+            <div
+              className={`mobile-hero ${featuredVideo ? 'has-featured-video' : ''}`}
+              style={featuredVideo?.thumbnail_url ? {
+                backgroundImage: `linear-gradient(90deg,rgba(5,8,16,.98) 0%,rgba(5,8,16,.78) 46%,rgba(5,8,16,.2) 100%),linear-gradient(0deg,#080b12 0%,transparent 58%),url("${featuredVideo.thumbnail_url}")`
+              } : undefined}
+            >
+              <div className="hero-topline">
+                <span className="hero-kicker"><Sparkles size={13} /> CURATED FOR YOUR SPACE</span>
+                <span className="hero-private"><ShieldCheck size={13} /> PRIVATE LIBRARY</span>
               </div>
+              <div className="mobile-hero-copy">
+                <span className="eyebrow">{featuredVideo ? 'PICK UP WHERE YOU LEFT OFF' : 'WELCOME TO YOUR PRIVATE CINEMA'}</span>
+                <h2>{featuredVideo ? getDisplayVideoTitle(featuredVideo) : <>Your videos.<br />Your world.</>}</h2>
+                <p>{featuredVideo ? (featuredVideo.channel_title || 'Continue from your personal collection') : 'A beautiful home for the videos you choose to keep. No endless feeds. Just what matters to you.'}</p>
+                <div className="hero-actions">
+                  {featuredVideo && (
+                    <button className="primary-btn hero-play" onClick={() => openVideo(featuredVideo)}>
+                      <Play size={17} fill="currentColor" /> {visibleHistory.some(item => item.id === featuredVideo.id) ? 'Continue watching' : 'Play featured'}
+                    </button>
+                  )}
+                  <button className="outline-btn hero-add" onClick={importLocalFiles}>
+                    <Plus size={17} /> Add to library
+                  </button>
+                </div>
+                <div className="hero-metrics">
+                  <div><strong>{localCount}</strong><span>VIDEOS IN LIBRARY</span></div>
+                  <i />
+                  <div><strong>{visibleHistory.length}</strong><span>IN PROGRESS</span></div>
+                  <i />
+                  <div><strong>{channels.length}</strong><span>CHANNELS</span></div>
+                </div>
+              </div>
+              <div className="hero-side-mark"><Clapperboard size={88} strokeWidth={1} /><span>YOUR PRIVATE CINEMA</span></div>
             </div>
 
             <div className="section-head">
               <div>
-                <h2>Continue watching</h2>
+                <h2><span className="shelf-accent">01</span> Continue watching</h2>
                 <p>Pick up where you left off.</p>
               </div>
             </div>
 
-            {history.length > 0 ? (
-              <VideoGrid videos={history} selected={selected}
+            {visibleHistory.length > 0 ? (
+              <VideoGrid videos={visibleHistory} selected={selected}
                 onSelect={setSelected} onPlay={openVideo} />
             ) : (
               <p className="mobile-hint">Your recently watched videos will appear here.</p>
             )}
 
-            <div className="section-head mobile-shelf-heading">
-              <div>
-                <h2>Recommended from your library</h2>
-                <p>Suggestions from content you've already imported.</p>
-              </div>
-            </div>
+            {showRecommendations && (
+              <>
+                <div className="section-head mobile-shelf-heading">
+                  <div>
+                    <h2><span className="shelf-accent">02</span> Handpicked for you</h2>
+                    <p>Discover something worth your time from your own collection.</p>
+                  </div>
+                </div>
 
-            {(recommendations.length ? recommendations : videos).length > 0 ? (
-              <VideoGrid
-                videos={(recommendations.length ? recommendations : videos).slice(0, 8)}
-                selected={selected}
-                onSelect={setSelected}
-                onPlay={openVideo}
-              />
-            ) : (
-              <p className="mobile-hint">Import videos to build your collection.</p>
+                {(visibleRecommendations.length ? visibleRecommendations : visibleVideos).length > 0 ? (
+                  <VideoGrid
+                    videos={(visibleRecommendations.length ? visibleRecommendations : visibleVideos).slice(0, 8)}
+                    selected={selected}
+                    onSelect={setSelected}
+                    onPlay={openVideo}
+                  />
+                ) : (
+                  <p className="mobile-hint">Import videos to build your collection.</p>
+                )}
+              </>
             )}
 
             <div className="section-head mobile-shelf-heading">
               <div>
-                <h2>Recently added</h2>
-                <p>Your latest local videos.</p>
+                <h2><span className="shelf-accent">03</span> Recently added</h2>
+                <p>Fresh additions to your personal library.</p>
               </div>
             </div>
 
             {videos.length > 0 ? (
-              <VideoGrid videos={videos.slice(0, 8)} selected={selected}
+              <VideoGrid videos={visibleVideos.slice(0, 8)} selected={selected}
                 onSelect={setSelected} onPlay={openVideo} />
             ) : (
               <p className="mobile-hint">No videos have been imported yet.</p>
@@ -576,12 +743,12 @@ function App() {
             <div className="section-head">
               <div>
                 <h2>Your focus library</h2>
-                <p>{videos.length} videos in your local catalogue.</p>
+                <p>{visibleVideos.length} videos in your local catalogue.</p>
               </div>
             </div>
 
             {videos.length > 0 ? (
-              <VideoGrid videos={videos} selected={selected}
+              <VideoGrid videos={visibleVideos} selected={selected}
                 onSelect={setSelected} onPlay={openVideo} />
             ) : (
               <p className="mobile-hint">Import local videos to build your focus library.</p>
@@ -598,98 +765,55 @@ function App() {
             )}
           </section>
         )}
-        {page === 'channels' && (
-          <section className="channel-page">
-            <form
-              className="channel-form panel"
-              onSubmit={importChannel}
-            >
-              <h2>Import a YouTube channel</h2>
-
-              <label>Channel URL or @handle</label>
-              <input
-                value={channelUrl}
-                onChange={event => setChannelUrl(event.target.value)}
-                placeholder="https://www.youtube.com/@GoogleDevelopers"
-                required
-              />
-
-              <label>YouTube Data API v3 key</label>
-              <input
-                type="password"
-                value={apiKey}
-                onChange={event => setApiKey(event.target.value)}
-                placeholder="Your API key"
-                required
-              />
-
-              <p className="hint">
-                This imports public video catalogue information, not video
-                files. Up to 250 recent uploads are checked per import.
-              </p>
-
-              <button
-                className="primary-btn"
-                disabled={channelBusy}
-              >
-                <Download size={17} />
-                {channelBusy ? 'Importing channel...' : 'Import channel'}
-              </button>
-            </form>
-
-            <div className="channel-layout">
-              <section className="channel-list panel">
-                <h3>Your channels</h3>
-
-                {channels.length === 0 && (
-                  <p className="hint">No channels imported yet.</p>
-                )}
-
-                {channels.map(channel => (
-                  <button
-                    key={channel.channelId}
-                    className={`channel-row ${
-                      activeChannel === channel.channelId ? 'active' : ''
-                    }`}
-                    onClick={() => selectChannel(channel.channelId)}
-                  >
-                    <Youtube size={18} />
-
-                    <span>
-                      <strong>{channel.channelTitle}</strong>
-                      <small>
-                        {channel.videoCount} catalogue videos
-                      </small>
-                    </span>
-                  </button>
-                ))}
-              </section>
-
-              <section className="channel-videos">
-                <div className="section-head">
-                  <div>
-                    <h2>
-                      {selectedChannel
-                        ? selectedChannel.channelTitle
-                        : 'Select a channel'}
-                    </h2>
-
-                    <p>
-                      {selectedChannel
-                        ? `${videos.length} videos in this channel`
-                        : 'Your imported channel videos will appear here.'}
-                    </p>
-                  </div>
-                </div>
-
-                <VideoGrid
-                  videos={videos}
-                  selected={selected}
-                  onSelect={setSelected}
-                  onPlay={openVideo}
-                />
-              </section>
+        {page === 'channel-import' && (
+          <section className="channel-page channel-import-page">
+            <div className="channel-intro">
+              <span className="eyebrow">YOUTUBE CATALOGUE</span>
+              <h2>Bring your favourite channels into LocalTube.</h2>
+              <p>Import public video details from a channel. Your videos stay grouped by channel, separate from local files.</p>
             </div>
+            <form className="channel-form panel" onSubmit={importChannel}>
+              <div className="form-step"><span>01</span><div><strong>Channel details</strong><small>Paste a channel URL, channel ID or @handle</small></div></div>
+              <label>YOUTUBE CHANNEL</label>
+              <input value={channelUrl} onChange={event => setChannelUrl(event.target.value)} placeholder="youtube.com/@GoogleDevelopers" required />
+              <label>YOUTUBE DATA API KEY</label>
+              <input type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder="Paste your API key" required />
+              <p className="hint">LocalTube imports public catalogue information and thumbnails. It does not download YouTube video files. Up to 250 recent uploads are checked per import.</p>
+              <div className="channel-form-actions">
+                <button className="primary-btn" disabled={channelBusy}><Download size={17} />{channelBusy ? 'Importing channel…' : 'Import channel'}</button>
+                <button type="button" className="secondary-btn" onClick={() => setPage('channels')}>View imported channels <ChevronRight size={16} /></button>
+              </div>
+            </form>
+            <div className="import-footnote"><ShieldCheck size={16} /> Your channel catalogue is stored in your LocalTube library on this device.</div>
+          </section>
+        )}
+
+        {page === 'channels' && (
+          <section className="channel-page imported-channels-page">
+            <div className="channel-page-heading">
+              <div><span className="eyebrow">YOUR YOUTUBE COLLECTION</span><h2>Imported channels</h2><p>Each channel has its own catalogue. Local video files remain in My Videos.</p></div>
+              <button className="primary-btn" onClick={() => setPage('channel-import')}><Plus size={16} /> Import channel</button>
+            </div>
+            {channels.length === 0 ? (
+              <div className="channel-empty panel"><div className="channel-empty-icon"><Youtube size={28} /></div><h3>No channels imported yet</h3><p>Start by adding a channel. Its catalogue will appear here, separate from your local videos.</p><button className="primary-btn" onClick={() => setPage('channel-import')}><Plus size={16} /> Import your first channel</button></div>
+            ) : (
+              <div className="channel-layout">
+                <section className="channel-list panel">
+                  <div className="channel-list-heading"><h3>CHANNELS</h3><span>{channels.length} imported</span></div>
+                  {channels.map(channel => (
+                    <button key={channel.channelId} className={`channel-row ${activeChannel === channel.channelId ? 'active' : ''}`} onClick={() => selectChannel(channel.channelId)}>
+                      <span className="channel-avatar"><Youtube size={19} /></span>
+                      <span><strong>{channel.channelTitle}</strong><small>{channel.videoCount} videos in catalogue</small></span>
+                      <ChevronRight size={16} />
+                    </button>
+                  ))}
+                </section>
+                <section className="channel-videos">
+                  <div className="section-head"><div><h2>{selectedChannel ? selectedChannel.channelTitle : 'Choose a channel'}</h2><p>{selectedChannel ? `${videos.length} catalogue videos` : 'Select a channel to browse its videos.'}</p></div></div>
+                  {selectedChannel ? <VideoGrid videos={videos} selected={selected} onSelect={setSelected} onPlay={openVideo} /> : <div className="channel-select-prompt"><Tv size={26} /><span>Select a channel to view its catalogue.</span></div>}
+                </section>
+              </div>
+            )}
           </section>
         )}
 
@@ -722,7 +846,7 @@ function App() {
               </div>
             ) : (
               <VideoGrid
-                videos={videos}
+                videos={visibleVideos}
                 selected={selected}
                 onSelect={setSelected}
                 onPlay={openVideo}
@@ -754,8 +878,8 @@ function App() {
             <>
               <div className="player-heading">
                 <div>
-                  <span className="eyebrow">NOW SELECTED</span>
-                  <h2>{selected.title}</h2>
+                  <span className="eyebrow"><PanelRight size={12} /> NOW IN YOUR STUDIO</span>
+                  <h2>{getDisplayVideoTitle(selected)}</h2>
                   <p>{selected.channel_title}</p>
                 </div>
 
@@ -783,34 +907,32 @@ function App() {
                 </button>
               </div>
 
-              <div className="player-frame">
-                <div className="catalogue-placeholder">
-                  <Play size={36} />
-
+              <div className="player-frame premium-preview">
+                {selected.thumbnail_url && <img className="preview-image" src={selected.thumbnail_url} alt="" />}
+                <div className="preview-shade" />
+                <div className="preview-topline"><span>{selected.isLocal ? 'LOCAL COLLECTION' : 'CHANNEL VAULT'}</span><span><ShieldCheck size={12} /> PRIVATE SESSION</span></div>
+                <div className="preview-center">
+                  <button className="preview-play" onClick={() => openVideo(selected)} aria-label="Open selected video"><Play size={25} fill="currentColor" /></button>
                   <strong>{selected.title}</strong>
-
-                  <p>
-                    {selected.isLocal
-                      ? 'Local video'
-                      : 'YouTube channel video'}
-                    {' '}· Opens in the dedicated LocalTube player.
-                  </p>
+                  <p>{selected.isLocal ? 'Ready in your local library' : 'Ready to watch from your imported channel'}</p>
+                  <button className="preview-open" onClick={() => openVideo(selected)}>Open player <ChevronRight size={15} /></button>
                 </div>
+                <div className="preview-bottomline"><span><HardDrive size={12} /> {selected.isLocal ? 'ON THIS DEVICE' : 'YOUTUBE EMBED'}</span><span>LOCALTUBE PLAYER</span></div>
               </div>
 
               <div className="detail-tabs">
                 <span className="tab-active">
                   <NotebookPen size={15} />
-                  Notes
+                  WATCH NOTES
                 </span>
 
                 <span className="local-indicator">
-                  Saved on this PC
+                  {window.localTube ? 'Saved on this PC' : 'Saved in LocalTube'}
                 </span>
               </div>
 
               <div className="notes-toolbar">
-                <span>VIDEO NOTES</span>
+                <span>YOUR PRIVATE NOTES</span>
 
                 <button
                   className="subtle-btn small"
@@ -824,13 +946,21 @@ function App() {
                 className="notes-editor"
                 value={notes}
                 onChange={event => setNotes(event.target.value)}
+                onBlur={() => {
+                  if (selected && notesReadyForVideo === selected.id) {
+                    persistNotesDraft(selected.id, selected.title, notes).catch(error => {
+                      console.error('[LocalTube] Notes blur-save failed:', error);
+                      setMessage(`Notes save failed: ${error.message || error}`);
+                    });
+                  }
+                }}
                 placeholder="Write notes and timestamps..."
               />
 
               <div className="notes-footer">
                 <span>
                   {notesPath
-                    ? notesPath.split(/[\\/]/).pop()
+                    ? (notesPath.startsWith('localtube-note://') ? 'Saved in app database' : notesPath.split(/[\\/]/).pop())
                     : 'Not saved yet'}
                 </span>
 
@@ -863,17 +993,17 @@ function App() {
               </div>
             </>
           ) : (
-            <div className="detail-empty">
-              <div className="empty-icon">
-                <Play size={27} />
+            <div className="detail-empty studio-welcome">
+              <div className="studio-orbit"><Clapperboard size={31} /></div>
+              <span className="eyebrow">YOUR PERSONAL STUDIO</span>
+              <h3>Make this moment yours.</h3>
+              <p>Choose any title to open its private watch space. Play, save notes, add timestamps and keep everything organized.</p>
+              <div className="studio-steps">
+                <span><Play size={13} /> WATCH</span>
+                <span><NotebookPen size={13} /> CAPTURE NOTES</span>
+                <span><Bookmark size={13} /> SAVE FOR LATER</span>
               </div>
-
-              <h3>Select a video</h3>
-
-              <p>
-                Select a local video or a YouTube catalogue entry to play it
-                and write notes.
-              </p>
+              <button className="outline-btn studio-import" onClick={importLocalFiles}><Plus size={15} /> Add your first videos</button>
             </div>
           )}
         </aside>
@@ -909,10 +1039,29 @@ function App() {
             </div>
 
             <p className="hint">
-              LocalTube stores your catalogue database in your Windows
-              application data folder. Your original video files are not
-              copied or moved.
+              Control recommendations and browsing distractions. Your original
+              video files remain in their existing locations.
             </p>
+
+            <div className="settings-group">
+              <h3>Focus &amp; distraction controls</h3>
+              {[
+                ['enabled', 'Enable Focus defaults', 'Prioritise your local library.'],
+                ['hideYouTube', 'Hide YouTube discovery', 'Keep channel catalogue access intentional.'],
+                ['hideRecommendations', 'Hide recommendations', 'Reduce suggested-content shelves.'],
+                ['hideShorts', 'Block Shorts and external navigation', 'Always enforced: the single-video player cannot open YouTube feeds or navigate away.']
+              ].map(([key, label, description]) => (
+                <label className="setting-row" key={key}>
+                  <span><strong>{label}</strong><small>{description}</small></span>
+                  <input
+                    type="checkbox"
+                    checked={key === 'hideShorts' ? true : Boolean(focusSettings[key])}
+                    disabled={!settingsReady || key === 'hideShorts'}
+                    onChange={event => updateFocusSetting(key, event.target.checked)}
+                  />
+                </label>
+              ))}
+            </div>
 
             <button
               className="outline-btn"
@@ -948,19 +1097,21 @@ function VideoGrid({ videos, selected, onSelect, onPlay }) {
           type="button"
           className={`video-card ${
             selected?.id === video.id ? 'selected' : ''
-          }`}
+          } ${video.isLocal && video.fileExists === false ? 'unavailable' : ''}`}
+          disabled={Boolean(video.isLocal && video.fileExists === false)}
           onClick={() => {
             onSelect(video);
             onPlay(video);
           }}
-          title={`Play ${video.title}`}
+          title={`Play ${getDisplayVideoTitle(video)}`}
         >
           <div className="thumb">
             {video.thumbnail_url ? (
               <img
                 src={video.thumbnail_url}
-                alt=""
+                alt={getDisplayVideoTitle(video)}
                 loading="lazy"
+                decoding="async"
               />
             ) : (
               <div className="thumb-placeholder">
@@ -973,18 +1124,29 @@ function VideoGrid({ videos, selected, onSelect, onPlay }) {
                 video.isLocal ? 'local' : 'online'
               }`}
             >
-              {video.isLocal ? 'LOCAL FILE' : 'YOUTUBE'}
+              {video.isLocal && video.fileExists === false ? 'FILE MISSING' : video.isLocal ? 'ON DEVICE' : 'YOUTUBE'}
             </span>
 
-            <span className="card-play-icon">
+            <span className="card-play-icon" aria-hidden="true">
               <Play size={25} fill="currentColor" />
             </span>
+            {Number(video.durationSeconds || video.duration_seconds) > 0 && (
+              <span className="video-duration">
+                {Math.floor(Number(video.durationSeconds || video.duration_seconds) / 60)}:
+                {String(Math.floor(Number(video.durationSeconds || video.duration_seconds) % 60)).padStart(2, '0')}
+              </span>
+            )}
           </div>
 
           <div className="video-card-copy">
-            <strong>{video.title}</strong>
-            <span>{video.channel_title || 'Local videos'}</span>
+            <strong>{getDisplayVideoTitle(video)}</strong>
+            <span>{video.isLocal ? 'ON THIS DEVICE' : (video.channel_title || 'YOUTUBE CHANNEL')}</span>
           </div>
+          {Number(video.durationSeconds || video.duration_seconds) > 0 && Number(video.progressSeconds || video.position_seconds) > 0 && (
+            <div className="card-progress" aria-label="Watch progress">
+              <span style={{ width: `${Math.min(100, (Number(video.progressSeconds || video.position_seconds) / Number(video.durationSeconds || video.duration_seconds)) * 100)}%` }} />
+            </div>
+          )}
         </button>
       ))}
     </div>

@@ -1,5 +1,6 @@
 
 import { registerPlugin, Capacitor } from '@capacitor/core';
+import { normalizeProgressSample, isUserCancelledPicker } from '../lib/playback-utils.mjs';
 import { FilePicker } from '@capawesome/capacitor-file-picker';
 import {
   CapacitorSQLite,
@@ -113,18 +114,22 @@ async function getAndroidDb() {
       }
 
       // Create indexes only AFTER tables and migration exist.
+      // Older databases may already contain duplicate catalogue entries.
+      // Rebuild lookup indexes as non-unique so an upgrade never fails or
+      // requires deleting user rows. Import code performs duplicate checks.
       await db.execute(`
-        CREATE UNIQUE INDEX IF NOT EXISTS videos_unique_source_uri
-        ON videos(source_uri)
-        WHERE source_uri IS NOT NULL AND source_uri <> '';
+        DROP INDEX IF EXISTS videos_unique_source_uri;
+        DROP INDEX IF EXISTS videos_unique_local_path;
+        DROP INDEX IF EXISTS videos_unique_youtube_id;
 
-        CREATE UNIQUE INDEX IF NOT EXISTS videos_unique_local_path
-        ON videos(file_path)
-        WHERE file_path IS NOT NULL AND file_path <> '';
+        CREATE INDEX IF NOT EXISTS videos_source_uri_lookup
+        ON videos(source_uri);
 
-        CREATE UNIQUE INDEX IF NOT EXISTS videos_unique_youtube_id
-        ON videos(youtube_id)
-        WHERE youtube_id IS NOT NULL AND youtube_id <> '';
+        CREATE INDEX IF NOT EXISTS videos_local_path_lookup
+        ON videos(file_path);
+
+        CREATE INDEX IF NOT EXISTS videos_youtube_id_lookup
+        ON videos(youtube_id);
 
         CREATE INDEX IF NOT EXISTS watch_history_recent
         ON watch_history(last_watched_at DESC);
@@ -159,32 +164,68 @@ function mapVideo(row) {
 
 async function enrichVideos(rows) {
   const videos = (rows || []).map(mapVideo);
+  let nextIndex = 0;
 
-  await Promise.all(
-    videos.map(async video => {
-      if (!video.file_path) {
-        video.fileExists = false;
-        return;
+  async function enrichOne(video) {
+    if (!video.file_path) {
+      video.fileExists = false;
+      return;
+    }
+
+    try {
+      const result = await LocalMedia.fileExists({
+        path: video.file_path
+      });
+
+      video.fileExists = Boolean(result?.exists);
+
+      // Older imports do not have a poster yet. Generate one on demand
+      // and persist its WebView-safe URL so later library loads are instant.
+      if (video.fileExists && !video.thumbnail_url) {
+        try {
+          const thumbnail = await LocalMedia.createThumbnail({
+            path: video.file_path
+          });
+
+          if (thumbnail?.path) {
+            const thumbnailUrl = Capacitor.convertFileSrc(thumbnail.path);
+            video.thumbnail_url = thumbnailUrl;
+
+            await (await getAndroidDb()).run(
+              'UPDATE videos SET thumbnail_url = ? WHERE id = ?',
+              [thumbnailUrl, Number(video.id)]
+            );
+          }
+        } catch (thumbnailError) {
+          console.warn(
+            '[LocalTube] Thumbnail generation skipped:',
+            video.title,
+            thumbnailError
+          );
+        }
       }
+    } catch (error) {
+      console.warn(
+        '[LocalTube] Could not check file:',
+        video.file_path,
+        error
+      );
 
-      try {
-        const result = await LocalMedia.fileExists({
-          path: video.file_path
-        });
+      video.fileExists = false;
+    }
+  }
 
-        video.fileExists = Boolean(result?.exists);
-      } catch (error) {
-        console.warn(
-          '[LocalTube] Could not check file:',
-          video.file_path,
-          error
-        );
+  // Keep native video decoders bounded so a large library cannot exhaust
+  // memory by opening hundreds of MediaMetadataRetriever instances at once.
+  const workerCount = Math.min(4, videos.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < videos.length) {
+      const index = nextIndex++;
+      await enrichOne(videos[index]);
+    }
+  });
 
-        video.fileExists = false;
-      }
-    })
-  );
-
+  await Promise.all(workers);
   return videos;
 }
 
@@ -421,11 +462,20 @@ async function androidRecordProgress({
   const db = await getAndroidDb();
 
   const id = Number(videoId);
-  const position = Math.max(0, asNumber(positionSeconds));
-  const duration = Math.max(0, asNumber(durationSeconds));
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error('Invalid video ID for playback progress.');
+  }
 
-  const completed =
-    duration > 0 && position / duration >= 0.9 ? 1 : 0;
+  // Ignore transient samples while the YouTube iframe/ExoPlayer is starting
+  // or closing. A zero duration must never erase a previously saved position.
+  const sample = normalizeProgressSample(positionSeconds, durationSeconds);
+  if (!sample) {
+    return { success: false, ignored: true };
+  }
+
+  const position = sample.positionSeconds;
+  const duration = sample.durationSeconds;
+  const completed = sample.completed ? 1 : 0;
 
   await db.run(
     `
@@ -481,6 +531,9 @@ async function androidGetHistory(limit = 30) {
 
       INNER JOIN videos v
         ON v.id = h.video_id
+
+      WHERE h.completed = 0
+        AND h.position_seconds > 0
 
       ORDER BY h.last_watched_at DESC
 
@@ -563,14 +616,23 @@ async function androidGetRecommendations(limit = 20) {
 async function androidImportFiles() {
   const db = await getAndroidDb();
 
-  const pickerResult = await FilePicker.pickVideos({
-    limit: 0
-  });
+  let pickerResult;
+  try {
+    pickerResult = await FilePicker.pickVideos({ limit: 0 });
+  } catch (error) {
+    // Android's document picker can reject with "pickFiles canceled"
+    // when the user simply presses Back. Treat that as a normal dismissal.
+    if (isUserCancelledPicker(error)) {
+      return { cancelled: true, addedCount: 0, skippedCount: 0, errors: [] };
+    }
+    throw error;
+  }
 
   const files = pickerResult?.files || [];
 
   if (!files.length) {
     return {
+      cancelled: true,
       addedCount: 0,
       skippedCount: 0,
       errors: []
@@ -973,13 +1035,25 @@ async function androidOpenPlayer(videoId) {
       );
     }
 
-    // The current YouTubePlayer native implementation returns
-    // when the player is launched. It does not yet return the
-    // final playback position. See the implementation note below.
-   const playbackResult = await YouTubePlayer.play({
-  videoId: video.youtube_id,
-  title: video.title || 'LocalTube'
-});
+    const historyResult = await db.query(
+      `SELECT position_seconds, duration_seconds, completed
+       FROM watch_history WHERE video_id = ? LIMIT 1`,
+      [Number(video.id)]
+    );
+    const saved = historyResult.values?.[0];
+    const savedPosition = Math.max(0, asNumber(saved?.position_seconds));
+    const savedDuration = Math.max(0, asNumber(saved?.duration_seconds));
+    const resumePositionSeconds =
+      saved && !Boolean(saved.completed) && savedDuration > 0 &&
+      savedPosition < savedDuration
+        ? savedPosition
+        : 0;
+
+    const playbackResult = await YouTubePlayer.play({
+      videoId: video.youtube_id,
+      title: video.title || 'LocalTube',
+      startPositionSeconds: resumePositionSeconds
+    });
 
 if (
   playbackResult &&
@@ -997,6 +1071,11 @@ return playbackResult;
   }
 
   // Local video playback.
+  const fileCheck = await LocalMedia.fileExists({ path: video.file_path });
+  if (!fileCheck?.exists) {
+    throw new Error('This local video file is missing or cannot be read. Re-import it to restore playback.');
+  }
+
   const id = String(video.id);
 
   let checkpoint = {
@@ -1083,6 +1162,39 @@ function unavailable(feature) {
   };
 }
 
+async function androidGetFocusSettings() {
+  const db = await getAndroidDb();
+  const result = await db.query(
+    'SELECT key, value FROM settings WHERE key LIKE ?',
+    ['focus:%']
+  );
+  const settings = {};
+  for (const row of result.values || []) {
+    const key = String(row.key || '').replace(/^focus:/, '');
+    try {
+      settings[key] = JSON.parse(row.value);
+    } catch (error) {
+      console.warn('[LocalTube] Ignoring invalid focus preference:', key);
+    }
+  }
+  return settings;
+}
+
+async function androidSaveFocusSettings(values = {}) {
+  const db = await getAndroidDb();
+  const allowed = ['enabled', 'hideYouTube', 'hideRecommendations', 'hideShorts'];
+  for (const key of allowed) {
+    if (typeof values[key] === 'boolean') {
+      await db.run(
+        `INSERT INTO settings (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        [`focus:${key}`, JSON.stringify(values[key])]
+      );
+    }
+  }
+  return { saved: true };
+}
+
 function createAndroidApi() {
   return {
     exportNotes: androidExportNotes,
@@ -1108,6 +1220,8 @@ function createAndroidApi() {
     getHistory: androidGetHistory,
     recordProgress: androidRecordProgress,
     getRecommendations: androidGetRecommendations,
+    getFocusSettings: androidGetFocusSettings,
+    saveFocusSettings: androidSaveFocusSettings,
 
     getDataPath: async () =>
       'LocalTube Android private database'

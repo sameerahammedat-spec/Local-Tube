@@ -18,6 +18,7 @@ public class YouTubePlayerPlugin extends Plugin {
     public void play(PluginCall call) {
         String videoId = call.getString("videoId");
         String title = call.getString("title", "LocalTube");
+        double startPositionSeconds = Math.max(0, call.getDouble("startPositionSeconds", 0.0));
 
         if (videoId == null ||
             !videoId.matches("[a-zA-Z0-9_-]{11}")) {
@@ -32,6 +33,7 @@ public class YouTubePlayerPlugin extends Plugin {
 
         intent.putExtra("videoId", videoId);
         intent.putExtra("title", title);
+        intent.putExtra("startPositionSeconds", startPositionSeconds);
 
         startActivityForResult(
             call,

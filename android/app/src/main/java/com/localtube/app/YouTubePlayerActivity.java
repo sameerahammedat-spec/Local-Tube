@@ -3,6 +3,7 @@ package com.localtube.app;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.os.Build;
 import android.content.Intent;
 import android.os.Bundle;
 import android.view.Gravity;
@@ -10,6 +11,9 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
+import android.webkit.PermissionRequest;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceError;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -25,6 +29,7 @@ public class YouTubePlayerActivity extends Activity {
 
     private String videoId;
     private String videoTitle;
+    private double startPositionSeconds = 0;
 
     private double lastPositionSeconds = 0;
     private double lastDurationSeconds = 0;
@@ -37,6 +42,7 @@ public class YouTubePlayerActivity extends Activity {
 
         videoId = getIntent().getStringExtra("videoId");
         videoTitle = getIntent().getStringExtra("title");
+        startPositionSeconds = Math.max(0, getIntent().getDoubleExtra("startPositionSeconds", 0));
 
         if (videoTitle == null || videoTitle.trim().isEmpty()) {
             videoTitle = "LocalTube";
@@ -55,6 +61,7 @@ public class YouTubePlayerActivity extends Activity {
                 savedInstanceState.getDouble("duration", 0);
             completed =
                 savedInstanceState.getBoolean("completed", false);
+            startPositionSeconds = Math.max(0, lastPositionSeconds);
         }
 
         buildScreen();
@@ -62,7 +69,7 @@ public class YouTubePlayerActivity extends Activity {
 
         webView.loadDataWithBaseURL(
             "https://localhost/",
-            buildPlayerHtml(videoId),
+            buildPlayerHtml(videoId, startPositionSeconds),
             "text/html",
             "UTF-8",
             null
@@ -133,19 +140,88 @@ public class YouTubePlayerActivity extends Activity {
             "LocalTubeBridge"
         );
 
-        webView.setWebChromeClient(new WebChromeClient());
+        // The embedded player must never create a browser-like browsing surface.
+        // Pop-up windows (including YouTube logo links) are always denied.
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onCreateWindow(
+                WebView view,
+                boolean isDialog,
+                boolean isUserGesture,
+                android.os.Message resultMsg
+            ) {
+                return false;
+            }
+
+            @Override
+            public void onPermissionRequest(PermissionRequest request) {
+                request.deny();
+            }
+        });
 
         webView.setWebViewClient(new WebViewClient() {
+            private boolean isLocalTubeDocument(String url) {
+                if (url == null) return false;
+                return url.equals("https://localhost/") ||
+                    url.startsWith("https://localhost/");
+            }
+
+            private boolean shouldBlockTopLevel(String url) {
+                // The top-level document is only the generated LocalTube player.
+                // YouTube remains available inside its single-video iframe.
+                return !isLocalTubeDocument(url);
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(
+                WebView view,
+                WebResourceRequest request
+            ) {
+                if (!request.isForMainFrame()) {
+                    return false; // Allow the embedded YouTube player resources.
+                }
+
+                String url = request.getUrl() == null
+                    ? ""
+                    : request.getUrl().toString();
+
+                if (shouldBlockTopLevel(url)) {
+                    android.util.Log.w(
+                        "LocalTube",
+                        "Blocked top-level player navigation: " + url
+                    );
+                    updateStatus("Navigation is disabled in LocalTube.");
+                    return true;
+                }
+
+                return false;
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                if (shouldBlockTopLevel(url)) {
+                    android.util.Log.w(
+                        "LocalTube",
+                        "Blocked legacy player navigation: " + url
+                    );
+                    updateStatus("Navigation is disabled in LocalTube.");
+                    return true;
+                }
+                return false;
+            }
+
             @Override
             public void onPageFinished(WebView view, String url) {
-                updateStatus("Loading YouTube player...");
+                if (isLocalTubeDocument(url)) {
+                    updateStatus("Loading YouTube player...");
+                }
             }
 
             @Override
             public void onReceivedError(
                 WebView view,
-                android.webkit.WebResourceRequest request,
-                android.webkit.WebResourceError error
+                WebResourceRequest request,
+                WebResourceError error
             ) {
                 if (request.isForMainFrame()) {
                     updateStatus(
@@ -162,7 +238,7 @@ public class YouTubePlayerActivity extends Activity {
         });
     }
 
-    private String buildPlayerHtml(String id) {
+    private String buildPlayerHtml(String id, double startSeconds) {
         return "<!doctype html>"
             + "<html><head>"
             + "<meta name='viewport' content='width=device-width,"
@@ -191,13 +267,14 @@ public class YouTubePlayerActivity extends Activity {
             + "player=new YT.Player('player',{"
             + "width:'100%',height:'100%',"
             + "videoId:'" + id + "',"
-            + "playerVars:{autoplay:0,controls:1,playsinline:1,rel:0,"
+            + "playerVars:{autoplay:0,controls:1,playsinline:1,rel:0,start:" + Math.floor(startSeconds) + ","
             + "fs:1,enablejsapi:1,origin:'https://localhost'},"
             + "events:{"
             + "onReady:function(){"
+            + "if(" + Math.floor(startSeconds) + ">0){player.seekTo(" + Math.floor(startSeconds) + ",true);}"
             + "report('ready');"
             + "if(progressTimer===null){"
-            + "progressTimer=setInterval(reportProgress,3000);"
+            + "progressTimer=setInterval(reportProgress,1000);"
             + "}"
             + "},"
             + "onStateChange:function(e){"
@@ -221,6 +298,15 @@ public class YouTubePlayerActivity extends Activity {
         runOnUiThread(() -> {
             if (statusView != null) {
                 statusView.setText(message);
+                statusView.setVisibility(View.VISIBLE);
+            }
+        });
+    }
+
+    private void hideStatus() {
+        runOnUiThread(() -> {
+            if (statusView != null) {
+                statusView.setVisibility(View.GONE);
             }
         });
     }
@@ -240,17 +326,15 @@ public class YouTubePlayerActivity extends Activity {
                 lastPositionSeconds = Math.max(0, position);
                 lastDurationSeconds = Math.max(0, duration);
 
-                if (lastDurationSeconds > 0 &&
-                    lastPositionSeconds / lastDurationSeconds >= 0.9) {
-                    completed = true;
-                }
+                completed = lastDurationSeconds > 0 &&
+                    lastPositionSeconds / lastDurationSeconds >= 0.9;
             }
         }
 
         @JavascriptInterface
         public void onPlayerStatus(String status) {
             if ("ready".equals(status)) {
-                updateStatus("YouTube player ready. Press Play to start.");
+                hideStatus();
 
                 runOnUiThread(() -> {
                     if (progressBar != null) {
@@ -259,10 +343,10 @@ public class YouTubePlayerActivity extends Activity {
                 });
 
             } else if ("playing".equals(status)) {
-                updateStatus("Playing");
+                hideStatus();
 
             } else if ("paused".equals(status)) {
-                updateStatus("Paused");
+                hideStatus();
 
             } else if ("ended".equals(status)) {
                 synchronized (YouTubePlayerActivity.this) {
@@ -273,7 +357,7 @@ public class YouTubePlayerActivity extends Activity {
                     }
                 }
 
-                updateStatus("Video finished");
+                hideStatus();
 
             } else if (status != null && status.startsWith("error:")) {
                 String code = status.substring("error:".length());
@@ -322,21 +406,28 @@ public class YouTubePlayerActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (webView != null) {
-            webView.evaluateJavascript(
-                "(function(){try{"
-                + "if(player&&player.getCurrentTime){"
-                + "LocalTubeBridge.onProgress("
-                + "player.getCurrentTime()||0,"
-                + "player.getDuration()||0);"
-                + "}}catch(e){}})();",
-                null
-            );
-
-            webView.stopLoading();
+        if (webView == null) {
+            finishWithProgress();
+            return;
         }
 
-        finishWithProgress();
+        // evaluateJavascript is asynchronous. Finish only after the JavaScript
+        // bridge has delivered the final position to PlayerBridge; otherwise
+        // the Activity result can contain the previous one-second checkpoint.
+        webView.evaluateJavascript(
+            "(function(){try{"
+            + "if(player&&player.getCurrentTime&&player.getDuration){"
+            + "LocalTubeBridge.onProgress("
+            + "player.getCurrentTime()||0,"
+            + "player.getDuration()||0);"
+            + "}}catch(e){}})();",
+            value -> {
+                if (webView != null) {
+                    webView.stopLoading();
+                }
+                finishWithProgress();
+            }
+        );
     }
 
     @Override

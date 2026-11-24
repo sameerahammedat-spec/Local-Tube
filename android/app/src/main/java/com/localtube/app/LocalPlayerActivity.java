@@ -112,9 +112,7 @@ public class LocalPlayerActivity extends AppCompatActivity {
         lastPositionMs = position;
         lastDurationMs = duration;
 
-        if (duration > 0L && position >= duration * 0.9) {
-            position = 0L;
-        }
+        position = PlaybackProgress.safeResumePosition(position, duration);
 
         SharedPreferences prefs =
             getSharedPreferences(PREFS, Context.MODE_PRIVATE);
