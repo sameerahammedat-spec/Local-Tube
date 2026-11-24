@@ -1381,3 +1381,23 @@ button, input, textarea { font-family: inherit; }
     overflow: visible !important;
   }
 }
+
+
+@media(max-width:700px){
+  .topbar .eyebrow{font-size:8px;letter-spacing:1.1px}
+  .hero-kicker,.hero-private{font-size:8px;letter-spacing:.65px}
+  .mobile-hero-copy .eyebrow{font-size:9px;letter-spacing:1.35px}
+  .hero-metrics span{font-size:8px;letter-spacing:.55px;line-height:1.35}
+  .hero-metrics strong{font-size:17px}
+  .source-chip{font-size:8px;letter-spacing:.55px}
+  .video-card-copy strong{font-size:13px;line-height:1.4}
+  .video-card-copy span{font-size:10px}
+  .searchbox input{font-size:12px}
+  .channel-form label{font-size:10px}
+  .channel-form .hint,.channel-intro p{font-size:12px}
+}
+.brand-icon{position:relative;overflow:hidden}
+.brand-icon:after{
+  content:"";position:absolute;inset:1px;border:1px solid rgba(255,255,255,.28);
+  border-radius:inherit;pointer-events:none;
+}
