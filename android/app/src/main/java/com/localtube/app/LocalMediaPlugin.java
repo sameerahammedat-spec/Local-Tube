@@ -172,7 +172,7 @@ public class LocalMediaPlugin extends Plugin {
             }
 
             File thumbnailDirectory = new File(
-                getContext().getCacheDir(),
+                getContext().getFilesDir(),
                 "LocalTube/thumbnails"
             );
 
@@ -214,8 +214,6 @@ public class LocalMediaPlugin extends Plugin {
 
             JSObject response = new JSObject();
             response.put("path", outputFile.getAbsolutePath());
-            response.put("width", 640);
-            response.put("height", 360);
             call.resolve(response);
 
         } catch (Exception error) {
