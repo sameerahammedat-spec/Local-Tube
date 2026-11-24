@@ -83,11 +83,11 @@ jobs:
 
       - name: Run Android unit tests
         working-directory: android
-        run: ./gradlew testDebugUnitTest
+        run: bash ./gradlew testDebugUnitTest
 
       - name: Assemble debug APK
         working-directory: android
-        run: ./gradlew assembleDebug
+        run: bash ./gradlew assembleDebug
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
